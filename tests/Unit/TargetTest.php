@@ -38,6 +38,24 @@ test('the guard refuses loopback, metadata and multicast, and allows private net
         ->and($guard->resolve('[2001:db8::1]'))->toBe('2001:db8::1');
 });
 
+test('the guard sees through IPv4 addresses wrapped in IPv6', function (string $address) {
+    expect(fn () => (new TargetGuard)->resolve($address))
+        ->toThrow(fn (SshException $e) => expect($e->reason)->toBe(SshException::REFUSED_TARGET));
+})->with([
+    'mapped loopback' => ['::ffff:127.0.0.1'],
+    'compatible loopback' => ['::127.0.0.1'],
+    'NAT64 metadata' => ['64:ff9b::a9fe:a9fe'],
+    '6to4 metadata' => ['2002:a9fe:a9fe::1'],
+    '6to4 loopback' => ['2002:7f00:1::'],
+]);
+
+test('wrapped addresses of this application count as its own', function () {
+    $guard = new TargetGuard(false, ['203.0.113.5']);
+
+    expect(fn () => $guard->resolve('64:ff9b::cb00:7105'))->toThrow(SshException::class, 'own server')
+        ->and($guard->resolve('64:ff9b::a00:5'))->toBe('64:ff9b::a00:5');
+});
+
 test('the guard refuses this application\'s own address unless local targets are allowed', function () {
     $lookup = fn (string $host): array => match ($host) {
         'ci.example.com' => ['203.0.113.5'],

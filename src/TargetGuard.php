@@ -9,7 +9,8 @@ use Closure;
 /**
  * Resolves a host and refuses obviously wrong targets before connecting:
  * loopback, unspecified, link-local (cloud metadata), multicast and the
- * caller's own addresses. Private ranges (10/8, 192.168/16, 100.64/10…) are
+ * caller's own addresses, also when wrapped in IPv6 (mapped, compatible,
+ * NAT64, 6to4). Private ranges (10/8, 192.168/16, 100.64/10…) are
  * allowed: a VPS on a private network or a tailnet is a normal target.
  *
  * Connect to the address resolve() returns, so a DNS answer that changes
@@ -77,9 +78,9 @@ final class TargetGuard
             return 'it is not a valid IP address.';
         }
 
-        // IPv4-mapped IPv6 (::ffff:a.b.c.d) is judged as the IPv4 address.
-        if (strlen($packed) === 16 && str_starts_with($packed, str_repeat("\0", 10)."\xff\xff")) {
-            $packed = substr($packed, 12);
+        // An IPv4 address wrapped in IPv6 is judged as the IPv4 address.
+        if (strlen($packed) === 16) {
+            $packed = self::embeddedIpv4($packed) ?? $packed;
         }
 
         $normalized = (string) inet_ntop($packed);
@@ -111,6 +112,30 @@ final class TargetGuard
             in_array($normalized, $own, true) => $self,
             default => null,
         };
+    }
+
+    /**
+     * The IPv4 address inside an IPv4-mapped (::ffff:0:0/96), IPv4-compatible
+     * (::/96), NAT64 (64:ff9b::/96) or 6to4 (2002::/16) address.
+     */
+    private static function embeddedIpv4(string $packed): ?string
+    {
+        $prefix12 = substr($packed, 0, 12);
+
+        if ($prefix12 === str_repeat("\0", 10)."\xff\xff" || $prefix12 === "\x00\x64\xff\x9b".str_repeat("\0", 8)) {
+            return substr($packed, 12);
+        }
+
+        // ::/96 except :: and ::1, which are judged as IPv6.
+        if ($prefix12 === str_repeat("\0", 12) && ltrim(substr($packed, 12), "\0") !== '' && substr($packed, 12) !== "\0\0\0\1") {
+            return substr($packed, 12);
+        }
+
+        if (str_starts_with($packed, "\x20\x02")) {
+            return substr($packed, 2, 4);
+        }
+
+        return null;
     }
 
     /**
