@@ -1,0 +1,76 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Kongpda\ServerConnect;
+
+/**
+ * Where to connect: host, port and login, validated strictly. Nothing here is
+ * ever parsed as an option: no leading "-", no whitespace or control
+ * characters, no "@" smuggling a user into the host.
+ */
+final readonly class Target
+{
+    public function __construct(
+        public string $host,
+        public int $port,
+        public string $user,
+    ) {
+        self::validateHost($host);
+        self::validateUser($user);
+        self::validatePort($port);
+    }
+
+    /**
+     * @throws InvalidTarget
+     */
+    public static function validateHost(string $host): void
+    {
+        if ($host === '') {
+            throw new InvalidTarget('Enter the server\'s host name or IP address.');
+        }
+
+        if (str_starts_with($host, '-')) {
+            throw new InvalidTarget('The host must not start with "-".');
+        }
+
+        if (strlen($host) > 253 || preg_match('/^[A-Za-z0-9._:\[\]-]+$/', $host) !== 1) {
+            throw new InvalidTarget('Use only letters, digits and . - _ : [ ] in the host (an IP address or a host name, without a user or port).');
+        }
+    }
+
+    /**
+     * @throws InvalidTarget
+     */
+    public static function validateUser(string $user): void
+    {
+        if ($user === '' || str_starts_with($user, '-') || strlen($user) > 64 || preg_match('/[\s\x00-\x1f\x7f:\/]/', $user) === 1) {
+            throw new InvalidTarget('Use a plain login name such as root or deploy (no spaces, not starting with "-").');
+        }
+    }
+
+    /**
+     * @throws InvalidTarget
+     */
+    public static function validatePort(int $port): void
+    {
+        if ($port < 1 || $port > 65535) {
+            throw new InvalidTarget('The SSH port must be between 1 and 65535.');
+        }
+    }
+
+    /**
+     * The host without IPv6 brackets.
+     */
+    public function bareHost(): string
+    {
+        return trim($this->host, '[]');
+    }
+
+    public function __toString(): string
+    {
+        $host = str_contains($this->bareHost(), ':') ? '['.$this->bareHost().']' : $this->host;
+
+        return "{$this->user}@{$host}".($this->port === 22 ? '' : ":{$this->port}");
+    }
+}

@@ -1,0 +1,17 @@
+<?php
+
+// phpseclib's docblock leaves out a documented argument: exec() takes false
+// to leave reading the channel to the caller.
+
+namespace phpseclib3\Net {
+
+class SSH2
+{
+    /**
+     * @param  string  $command
+     * @param  callable|false|null  $callback
+     * @return string|bool
+     */
+    public function exec($command, $callback = null) {}
+}
+}
