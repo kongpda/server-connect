@@ -107,6 +107,12 @@ final class PhpseclibConnector implements Connector
                 : $ssh->login($target->user, $key->phpseclib());
         } catch (Throwable) {
             // phpseclib's messages don't contain credentials; drop them anyway.
+            if (! $ssh->isConnected()) {
+                throw new SshException("The connection to {$where} dropped while logging in. Try again; if it keeps happening, check the server's sshd log.", SshException::DROPPED);
+            }
+
+            $ssh->disconnect();
+
             throw new SshException("Logging in to {$where} failed before authentication finished. Check that sshd allows this user.", SshException::AUTHENTICATION);
         } finally {
             $ssh->forgetCredentials();

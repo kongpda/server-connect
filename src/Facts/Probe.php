@@ -77,32 +77,44 @@ SH;
             throw new SshException('Reading the server\'s facts timed out.', SshException::TIMEOUT);
         }
 
+        if ($result->truncated) {
+            throw new SshException('The server\'s answer to the facts probe was too long, so it was cut off.', SshException::DROPPED);
+        }
+
         return self::parse($result->output);
     }
 
     /**
-     * @throws SshException when the output has no probe sections at all
+     * @throws SshException when the output has no probe sections, or stops before the end
      */
     public static function parse(string $raw): ServerFacts
     {
         $sections = self::sections($raw);
 
         if (! isset($sections['UNAME'])) {
-            $message = trim(implode("\n", array_slice(explode("\n", trim($raw)), 0, 4)));
+            // The server's own words, short and printable: it may send anything.
+            $message = trim(implode("\n", array_slice(explode("\n", trim(substr($raw, 0, 2000))), 0, 4)));
+            $message = mb_substr((string) preg_replace('/[\x00-\x09\x0b-\x1f\x7f]/', '', $message), 0, 200);
 
             throw new SshException($message === '' ? 'The server sent no answer to the facts probe.' : "The facts probe didn't run: {$message}", SshException::DROPPED);
         }
 
+        // Without the end marker, missing sections would read as "no sudo", "no ufw" and so on.
+        if (! array_key_exists('END', $sections)) {
+            throw new SshException('The server\'s answer to the facts probe stopped part way.', SshException::DROPPED);
+        }
+
+        unset($sections['END']);
         $os = self::keyValues($sections['OSREL'] ?? '');
         $uname = array_values(array_filter(array_map('trim', explode("\n", $sections['UNAME']))));
         $memory = self::keyValues(str_replace(':', '=', $sections['MEM'] ?? ''));
-        $kb = fn (string $key): ?int => isset($memory[$key]) && preg_match('/^(\d+)/', $memory[$key], $m) === 1 ? intdiv((int) $m[1], 1024) : null;
+        $kb = fn (string $key): ?int => isset($memory[$key]) && preg_match('/^(\d{1,15})\b/', $memory[$key], $m) === 1 ? intdiv((int) $m[1], 1024) : null;
         $disk = preg_split('/\s+/', trim($sections['DISK'] ?? '')) ?: [];
         $load = preg_split('/\s+/', trim($sections['LOAD'] ?? '')) ?: [];
         $uptime = preg_split('/\s+/', trim($sections['UPTIME'] ?? '')) ?: [];
         $docker = trim($sections['DOCKER'] ?? 'none');
         $sshd = strtolower($sections['SSHD'] ?? '');
-        $number = fn (?string $value): ?float => $value !== null && is_numeric($value) ? (float) $value : null;
+        $number = fn (?string $value): ?float => self::decimal($value);
         $first = fn (string $name): string => trim((string) strtok(($sections[$name] ?? '')."\n", "\n"));
 
         $extra = [];
@@ -125,12 +137,12 @@ SH;
             memoryTotalMb: $kb('MemTotal'),
             memoryAvailableMb: $kb('MemAvailable'),
             swapTotalMb: $kb('SwapTotal'),
-            diskTotalGb: isset($disk[0]) && ctype_digit($disk[0]) ? round((int) $disk[0] / 1048576, 1) : null,
-            diskFreeGb: isset($disk[1]) && ctype_digit($disk[1]) ? round((int) $disk[1] / 1048576, 1) : null,
+            diskTotalGb: self::gigabytes($disk[0] ?? null),
+            diskFreeGb: self::gigabytes($disk[1] ?? null),
             load1: $number($load[0] ?? null),
             load5: $number($load[1] ?? null),
             load15: $number($load[2] ?? null),
-            uptimeSeconds: isset($uptime[0]) && is_numeric($uptime[0]) ? (int) $uptime[0] : null,
+            uptimeSeconds: self::seconds($uptime[0] ?? null),
             isRoot: $first('ID') === '0',
             sudo: in_array($first('SUDO'), ['root', 'yes'], true) ? $first('SUDO') : 'no',
             systemd: $first('SYSTEMD') === 'yes',
@@ -174,9 +186,38 @@ SH;
             }
         }
 
-        unset($sections['END']);
-
         return $sections;
+    }
+
+    /**
+     * A plain, bounded, non-negative decimal: a server may send "1e999"
+     * (INF, which json_encode refuses), "-5" or "NAN".
+     *
+     * @internal
+     */
+    public static function decimal(?string $value): ?float
+    {
+        return $value !== null && preg_match('/^\d{1,12}(?:\.\d{1,9})?$/', $value) === 1 ? (float) $value : null;
+    }
+
+    /**
+     * @internal
+     */
+    public static function seconds(?string $value): ?int
+    {
+        $seconds = self::decimal($value);
+
+        return $seconds === null ? null : (int) $seconds;
+    }
+
+    /**
+     * Kilobytes (df -Pk) as gigabytes.
+     *
+     * @internal
+     */
+    public static function gigabytes(?string $kilobytes): ?float
+    {
+        return $kilobytes !== null && preg_match('/^\d{1,15}$/', $kilobytes) === 1 ? round((int) $kilobytes / 1048576, 1) : null;
     }
 
     /**

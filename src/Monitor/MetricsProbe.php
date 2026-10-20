@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Kongpda\ServerConnect\Monitor;
 
+use Kongpda\ServerConnect\Facts\Probe;
 use Kongpda\ServerConnect\Session;
-use Kongpda\ServerConnect\Shell\Shims;
 use Kongpda\ServerConnect\SshException;
 
 /**
@@ -27,9 +27,13 @@ echo @@UPTIME@@; cat /proc/uptime 2>/dev/null
 echo @@END@@
 SH;
 
+    /**
+     * No shims: the body needs neither sudo nor docker, and the docker check
+     * would run `docker ps` (and `sudo -n docker ps`, logged) on every poll.
+     */
     public static function script(): string
     {
-        return Shims::script(self::MARKER, self::BODY, strict: false);
+        return '# '.self::MARKER."\nexec 2>&1\n".self::BODY."\n";
     }
 
     /**
@@ -37,7 +41,13 @@ SH;
      */
     public static function run(Session $session): Metrics
     {
-        return self::parse($session->run('sh -s', self::script(), null, 20)->output);
+        $result = $session->run('sh -s', self::script(), null, 20);
+
+        if ($result->timedOut) {
+            throw new SshException('Reading the server\'s metrics timed out.', SshException::TIMEOUT);
+        }
+
+        return self::parse($result->output);
     }
 
     public static function parse(string $raw): Metrics
@@ -55,20 +65,20 @@ SH;
         }
 
         $cpu = self::cpuPercent($sections['STAT1'] ?? '', $sections['STAT2'] ?? '');
-        $total = preg_match('/MemTotal:\s+(\d+)/', $sections['MEM'] ?? '', $m) === 1 ? intdiv((int) $m[1], 1024) : null;
-        $available = preg_match('/MemAvailable:\s+(\d+)/', $sections['MEM'] ?? '', $m) === 1 ? intdiv((int) $m[1], 1024) : null;
+        $total = preg_match('/MemTotal:\s+(\d{1,15})\b/', $sections['MEM'] ?? '', $m) === 1 ? intdiv((int) $m[1], 1024) : null;
+        $available = preg_match('/MemAvailable:\s+(\d{1,15})\b/', $sections['MEM'] ?? '', $m) === 1 ? intdiv((int) $m[1], 1024) : null;
         $disk = preg_split('/\s+/', trim($sections['DISK'] ?? '')) ?: [];
         $load = preg_split('/\s+/', trim($sections['LOAD'] ?? '')) ?: [];
         $uptime = preg_split('/\s+/', trim($sections['UPTIME'] ?? '')) ?: [];
 
         return new Metrics(
             cpuPercent: $cpu,
-            load1: isset($load[0]) && is_numeric($load[0]) ? (float) $load[0] : null,
+            load1: Probe::decimal($load[0] ?? null),
             memoryTotalMb: $total,
-            memoryUsedMb: $total !== null && $available !== null ? $total - $available : null,
-            diskTotalGb: isset($disk[0]) && ctype_digit($disk[0]) ? round((int) $disk[0] / 1048576, 1) : null,
-            diskFreeGb: isset($disk[1]) && ctype_digit($disk[1]) ? round((int) $disk[1] / 1048576, 1) : null,
-            uptimeSeconds: isset($uptime[0]) && is_numeric($uptime[0]) ? (int) $uptime[0] : null,
+            memoryUsedMb: $total !== null && $available !== null && $available <= $total ? $total - $available : null,
+            diskTotalGb: Probe::gigabytes($disk[0] ?? null),
+            diskFreeGb: Probe::gigabytes($disk[1] ?? null),
+            uptimeSeconds: Probe::seconds($uptime[0] ?? null),
         );
     }
 
@@ -84,7 +94,11 @@ SH;
         $total = array_sum($b) - array_sum($a);
         $idle = ($b[3] + ($b[4] ?? 0)) - ($a[3] + ($a[4] ?? 0));
 
-        return $total > 0 ? round(100 * ($total - $idle) / $total, 1) : null;
+        if ($total <= 0 || $idle < 0 || $idle > $total) {
+            return null;
+        }
+
+        return round(100 * ($total - $idle) / $total, 1);
     }
 
     /**
@@ -94,10 +108,14 @@ SH;
     {
         $parts = preg_split('/\s+/', trim($line)) ?: [];
 
-        if (($parts[0] ?? '') !== 'cpu' || count($parts) < 5) {
+        // user nice system idle iowait irq softirq steal. The guest columns after
+        // them are already counted in user and nice, so they're left out.
+        $columns = array_slice($parts, 1, 8);
+
+        if (($parts[0] ?? '') !== 'cpu' || count($columns) < 4 || preg_grep('/^\d{1,18}$/', $columns, PREG_GREP_INVERT) !== []) {
             return null;
         }
 
-        return array_map('intval', array_slice($parts, 1));
+        return array_map('intval', $columns);
     }
 }

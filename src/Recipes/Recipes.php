@@ -125,9 +125,12 @@ SH,
                 group: RecipeGroup::Prepare,
                 safety: SafetyLevel::HighRisk,
                 prepareOrder: 4,
-                params: [new RecipeParam('EXTRA_PORTS', 'Extra inbound ports', '443 8080/tcp', false, '/^(\d{1,5}(:\d{1,5})?(\/(tcp|udp))?)( \d{1,5}(:\d{1,5})?(\/(tcp|udp))?)*$/')],
+                params: [new RecipeParam('EXTRA_PORTS', 'Extra inbound ports', '443 8080/tcp', false, '/^(?:\d{1,5}(?:\/(?:tcp|udp))?|\d{1,5}:\d{1,5}\/(?:tcp|udp))(?: (?:\d{1,5}(?:\/(?:tcp|udp))?|\d{1,5}:\d{1,5}\/(?:tcp|udp)))*$/')],
                 body: <<<'SH'
-{ command -v ufw >/dev/null 2>&1 || { $APT update && $APT install ufw; }; } || exit 1
+if ! command -v ufw >/dev/null 2>&1; then
+  command -v apt-get >/dev/null 2>&1 || { echo 'ufw is not installed, and this server has no apt-get to install it with.'; exit 1; }
+  { $APT update && $APT install ufw; } || exit 1
+fi
 # SSH first, before any deny: sshd's own ports plus the port this connection reached on this
 # server ($SSH_CONNECTION). Behind NAT that differs from $SSH_PORT; with socket activation
 # (ssh.socket) it can differ from what sshd -T reports.
@@ -147,6 +150,7 @@ SH,
                 prepareOrder: 5,
                 params: [],
                 body: <<<'SH'
+command -v apt-get >/dev/null 2>&1 || { echo 'This recipe needs a Debian or Ubuntu server (apt-get).'; exit 1; }
 $APT update && $APT install fail2ban || exit 1
 if [ -f /var/log/auth.log ]; then B=auto; else B=systemd; $APT install python3-systemd >/dev/null 2>&1 || true; fi
 P=$( { $SUDO sshd -T 2>/dev/null | awk '$1=="port"{print $2}'; echo "${SSH_CONNECTION:-}" | awk '{print $4}'; } | grep -E '^[0-9]+$' | sort -un | paste -sd, -); [ -n "$P" ] || P=$SSH_PORT
@@ -163,6 +167,7 @@ SH,
                 prepareOrder: 6,
                 params: [],
                 body: <<<'SH'
+command -v apt-get >/dev/null 2>&1 || { echo 'This recipe needs a Debian or Ubuntu server (apt-get).'; exit 1; }
 $APT update && $APT install unattended-upgrades || exit 1
 echo 'unattended-upgrades unattended-upgrades/enable_auto_updates boolean true' | $SUDO debconf-set-selections
 $SUDO env DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -f noninteractive unattended-upgrades && echo 'Automatic security updates enabled.'
@@ -211,6 +216,7 @@ SH,
                 prepareOrder: null,
                 params: [],
                 body: <<<'SH'
+command -v apt-get >/dev/null 2>&1 || { echo 'This recipe needs a Debian or Ubuntu server (apt-get).'; exit 1; }
 sc_wait_dpkg
 $APT update && $APT upgrade || exit 1
 echo '--- Done. Reboot required:'; test -f /var/run/reboot-required && echo yes || echo no

@@ -42,9 +42,13 @@ final class Shims
 
     /**
      * A script for `sh -s`: marker line, strict mode, stderr into stdout, the shims, then the body.
+     *
+     * The body is one { … } group with stdin from /dev/null: sh reads the whole
+     * group before running it, and a command in it that reads stdin (an
+     * installer, apt, ssh) can't swallow the rest of the script.
      */
     public static function script(string $marker, string $body, bool $strict = true): string
     {
-        return "# {$marker}\n".($strict ? "set -eu\n" : '')."exec 2>&1\n".self::prelude().$body."\n";
+        return "# {$marker}\n".($strict ? "set -eu\n" : '')."exec 2>&1\n".self::prelude()."{\n{$body}\n} </dev/null\n";
     }
 }

@@ -23,10 +23,16 @@ step "starting sshd on 127.0.0.1:$port"
 docker run -d --rm --name "$name" -p "127.0.0.1:$port:22" -e "PW=$password" --entrypoint sh alpine/git -c \
     'ssh-keygen -A >/dev/null && adduser -D -s /bin/sh tester && echo "tester:$PW" | chpasswd >/dev/null && exec /usr/sbin/sshd -D -e -o PasswordAuthentication=yes -o PermitRootLogin=no' >/dev/null
 # docker-proxy accepts connections before sshd listens: wait for sshd's own log line.
+listening=''
 for _ in $(seq 1 100); do
-    docker logs "$name" 2>&1 | grep -q 'Server listening' && break
+    docker logs "$name" 2>&1 | grep -q 'Server listening' && { listening=1; break; }
     sleep 0.2
 done
+if [ -z "$listening" ]; then
+    echo "sshd didn't start within 20 seconds. Its log:" >&2
+    docker logs "$name" >&2 || true
+    exit 1
+fi
 fingerprint="$(docker exec "$name" ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $2}')"
 echo "host key $fingerprint"
 

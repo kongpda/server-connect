@@ -34,6 +34,37 @@
 - The `swap` recipe accepted sizes like `0999`, which sh reads as octal and
   aborts on. A resize that failed left the server with no swap; it now puts
   the old size back.
+- A facts probe whose answer stopped part way (or went over the output cap)
+  read the missing sections as "no sudo", "no ufw", "dpkg free". It now
+  throws `SshException` (`dropped`). `MetricsProbe::run()` throws on a
+  timeout instead of returning blanks.
+- Numbers from a server like `1e999`, `NAN` or `-5` became `INF` or negative
+  values, and `json_encode` of the facts threw. They now read as unknown
+  (`null`), as does memory use when "available" is more than the total.
+- The error for a probe that didn't run quoted the server's first lines
+  uncapped. It now keeps at most 200 printable characters.
+- CPU use counted guest time twice on hosts running VMs.
+- Every metrics poll ran `docker ps`, and `sudo -n docker ps` (logged in the
+  auth log). Metrics scripts no longer load the shell shims.
+- A command in a recipe or probe that read stdin (an installer, apt) could
+  swallow the rest of the script. Script bodies now run with stdin from
+  `/dev/null`.
+- `ufw`, `fail2ban`, `unattended-upgrades` and `apt-upgrade` failed with
+  `env: command not found` style errors on servers without apt. They now say
+  they need Debian or Ubuntu.
+- The `ufw` recipe accepted a port range without a protocol, which ufw
+  rejects. The range now needs `/tcp` or `/udp`.
+- A connection that dropped during login was reported as an authentication
+  failure. It's now `dropped`.
+- `scripts/test-ssh` went on to run the tests when sshd never started. It
+  now stops with sshd's log.
+
+### Documented
+
+- phpseclib signs with SHA-1 (`ssh-rsa`) when a server refuses an RSA client
+  key's SHA-2 signature.
+- Two workers pinning a new server's fingerprint at once: save the pin with a
+  conditional write.
 
 ### Added
 

@@ -59,3 +59,38 @@ test('params are validated and quoted, and unknown ones never reach the shell', 
 test('quote survives single quotes', function () {
     expect(Shims::quote("it's"))->toBe("'it'\\''s'");
 });
+
+/**
+ * Runs $script with `sh -s` the way the session does (script on stdin), with
+ * PATH set to an empty directory so no real command (sudo, apt-get) can run.
+ */
+function runScriptWithoutCommands(string $script): string
+{
+    $empty = sys_get_temp_dir().'/server-connect-empty-'.getmypid();
+    is_dir($empty) || mkdir($empty);
+    $process = proc_open(['/bin/sh', '-s'], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, ['PATH' => $empty]);
+    fwrite($pipes[0], $script);
+    fclose($pipes[0]);
+    $output = (string) stream_get_contents($pipes[1]);
+    proc_close($process);
+
+    return $output;
+}
+
+test('a command that reads stdin cannot swallow the rest of the script', function () {
+    // `read` stands in for an installer that reads stdin; it would eat the next line of the script.
+    $output = runScriptWithoutCommands(Shims::script('test', "read swallowed\necho \"still here, read: [\$swallowed]\"", strict: false));
+
+    expect($output)->toContain('still here, read: []');
+});
+
+test('apt recipes stop with a clear message on servers without apt-get', function (string $id) {
+    $output = runScriptWithoutCommands((string) Recipes::find($id)?->script(22));
+
+    expect($output)->toContain('apt-get');
+})->with(['essentials', 'ufw', 'fail2ban', 'unattended-upgrades', 'apt-upgrade']);
+
+test('a port range needs a protocol, which ufw requires', function () {
+    expect(fn () => Recipes::find('ufw')?->script(22, ['EXTRA_PORTS' => '6000:6010']))->toThrow(InvalidRecipeParam::class)
+        ->and(Recipes::find('ufw')?->script(22, ['EXTRA_PORTS' => '443 8080/tcp 6000:6010/udp']))->toContain("EXTRA_PORTS='443 8080/tcp 6000:6010/udp'");
+});

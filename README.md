@@ -116,7 +116,10 @@ What it does for you:
 - **Before authentication.** The host key is checked before any credential is
   sent. Only modern algorithms are offered: curve25519 or ECDH key exchange,
   ChaCha20-Poly1305, AES-GCM or AES-CTR with SHA-2 MACs, and Ed25519, ECDSA or
-  SHA-2 RSA host keys. No SHA-1, no group exchange, no CBC.
+  SHA-2 RSA host keys. No SHA-1, no group exchange, no CBC. One exception
+  sits inside phpseclib: if a server refuses an RSA *client* key's SHA-2
+  signature, phpseclib retries with SHA-1 (`ssh-rsa`). Use Ed25519 keys to
+  avoid it.
 - **A hostile server can't hold a worker.** The greeting must arrive within
   the connect timeout and the first 8 KB. RSA host keys with a huge modulus or
   exponent are refused before their signature is checked. Commands have a
@@ -141,6 +144,9 @@ What stays your app's job:
 - **Prefer a verified fingerprint over trust on first use** when a password
   is about to be sent: a man in the middle on the first connection would get
   it.
+- **Pin first-use fingerprints atomically.** Two workers connecting to a new
+  server at once both see "no pin yet". Save the pin with a conditional write
+  (only if still empty), and treat losing that race like a changed key.
 - **Run connections in queued jobs with a timeout.** DNS lookups, some
   handshake stalls, and a server that floods SSH control messages (which
   phpseclib handles internally, out of this package's reach) aren't covered by

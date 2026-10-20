@@ -1,11 +1,13 @@
 <?php
 
+use Kongpda\ServerConnect\CommandResult;
 use Kongpda\ServerConnect\Credentials;
 use Kongpda\ServerConnect\Facts\Probe;
 use Kongpda\ServerConnect\Facts\Provider;
 use Kongpda\ServerConnect\HostKeyPolicy;
 use Kongpda\ServerConnect\Monitor\MetricsProbe;
 use Kongpda\ServerConnect\PrivateKey;
+use Kongpda\ServerConnect\Session;
 use Kongpda\ServerConnect\SshException;
 use Kongpda\ServerConnect\Target;
 use Kongpda\ServerConnect\Testing\FakeConnector;
@@ -159,4 +161,65 @@ test('a local VM and a container are told apart', function () {
         ->and($lxc->isContainer())->toBeTrue()->and($lxc->isVirtualMachine())->toBeFalse()
         ->and($metal->isVirtualMachine())->toBeFalse()->and($metal->isContainer())->toBeFalse()
         ->and($junk->virtualization)->toBeNull();
+});
+
+test('a probe answer that stops part way is an error, not "no sudo, no ufw"', function () {
+    $cut = substr(sampleProbeOutput(), 0, (int) strpos(sampleProbeOutput(), '@@SUDO@@'));
+
+    expect(fn () => Probe::parse($cut))->toThrow(SshException::class, 'stopped part way');
+});
+
+test('a cut-off or timed-out probe throws instead of guessing', function () {
+    $session = new class implements Session
+    {
+        public bool $truncate = true;
+
+        public function run(string $command, string $stdin = '', ?Closure $onOutput = null, int $timeoutSeconds = 60): CommandResult
+        {
+            return $this->truncate
+                ? new CommandResult(0, sampleProbeOutput(), truncated: true)
+                : new CommandResult(null, "@@STAT1@@\n", timedOut: true);
+        }
+
+        public function disconnect(): void {}
+    };
+
+    expect(fn () => Probe::run($session))->toThrow(SshException::class, 'cut off');
+
+    $session->truncate = false;
+    expect(fn () => MetricsProbe::run($session))->toThrow(SshException::class, 'timed out');
+});
+
+test('hostile numbers from a server become unknown, so facts and metrics still encode', function () {
+    $facts = Probe::parse("@@UNAME@@\nLinux\nx86_64\n@@LOAD@@\n1e999 -1 NAN\n@@UPTIME@@\n-5 0\n@@DISK@@\n99999999999999999999 -1\n@@END@@\n");
+    $metrics = MetricsProbe::parse("@@STAT1@@\ncpu 100 0 100 800\n@@STAT2@@\ncpu 50 0 50 -900\n@@MEM@@\nMemTotal: 1024 kB\nMemAvailable: 999999999 kB\n@@LOAD@@\n1e999 1 1\n@@UPTIME@@\nINF 1\n@@END@@\n");
+
+    expect($facts->load1)->toBeNull()->and($facts->load5)->toBeNull()->and($facts->load15)->toBeNull()
+        ->and($facts->uptimeSeconds)->toBeNull()->and($facts->diskTotalGb)->toBeNull()->and($facts->diskFreeGb)->toBeNull()
+        ->and(json_encode($facts->toArray(), JSON_THROW_ON_ERROR))->toBeString()
+        ->and($metrics->cpuPercent)->toBeNull()->and($metrics->load1)->toBeNull()->and($metrics->uptimeSeconds)->toBeNull()
+        ->and($metrics->memoryUsedMb)->toBeNull()
+        ->and(json_encode($metrics->toArray(), JSON_THROW_ON_ERROR))->toBeString();
+});
+
+test('the error for a probe that did not run quotes only a short, printable part of the answer', function () {
+    try {
+        Probe::parse("sh: \x1b[31mnot found\x07\n".str_repeat('x', 5_000_000));
+        $this->fail('expected an exception');
+    } catch (SshException $e) {
+        expect(strlen($e->getMessage()))->toBeLessThan(300)
+            ->and($e->getMessage())->toContain('sh: [31mnot found')->not->toContain("\x1b")->not->toContain("\x07");
+    }
+});
+
+test('CPU use leaves out guest time, which /proc/stat already counts in user time', function () {
+    // 50 user jiffies, all of them guest time, out of 100: 50%, not 60% (guest counted twice).
+    $metrics = MetricsProbe::parse("@@STAT1@@\ncpu  0 0 0 0 0 0 0 0 0 0\n@@STAT2@@\ncpu  50 0 0 50 0 0 0 0 50 0\n@@END@@\n");
+
+    expect($metrics->cpuPercent)->toBe(50.0);
+});
+
+test('metrics polls run no docker or sudo checks', function () {
+    expect(MetricsProbe::script())->not->toContain('docker')->not->toContain('sudo')
+        ->and(shellSyntaxOk(MetricsProbe::script()))->toBeTrue();
 });
