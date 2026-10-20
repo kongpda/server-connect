@@ -25,8 +25,14 @@ final class PhpseclibSession implements Session
      */
     private const READ_TIMEOUT_SECONDS = 2;
 
+    /**
+     * How long closing the channel after a timeout may take before the
+     * connection is dropped instead.
+     */
+    private const CLOSE_GRACE_SECONDS = 5;
+
     public function __construct(
-        private readonly SSH2 $ssh,
+        private readonly GuardedSsh2 $ssh,
         private readonly string $where,
         private readonly int $maxOutputBytes = self::DEFAULT_MAX_OUTPUT_BYTES,
     ) {}
@@ -40,6 +46,8 @@ final class PhpseclibSession implements Session
 
         try {
             $this->ssh->setTimeout(self::READ_TIMEOUT_SECONDS);
+            $this->ssh->resetExitStatus();
+            $this->ssh->setHardDeadline($deadline + self::CLOSE_GRACE_SECONDS);
 
             if ($this->ssh->exec($command, false) === false) {
                 throw new SshException("{$this->where} refused to run a command.", SshException::DROPPED);
@@ -57,7 +65,13 @@ final class PhpseclibSession implements Session
 
                 if ($remaining <= 0) {
                     $timedOut = true;
-                    $this->ssh->reset(SSH2::CHANNEL_EXEC);
+
+                    try {
+                        $this->ssh->reset(SSH2::CHANNEL_EXEC);
+                    } catch (Throwable) {
+                        // The close ran past its grace period and the connection was dropped.
+                    }
+
                     break;
                 }
 
@@ -103,6 +117,8 @@ final class PhpseclibSession implements Session
             throw $exception;
         } catch (Throwable $exception) {
             throw new SshException("The connection to {$this->where} dropped: ".mb_substr($exception->getMessage(), 0, 200), SshException::DROPPED);
+        } finally {
+            $this->ssh->setHardDeadline(null);
         }
 
         return new CommandResult($timedOut ? null : (is_int($exit) ? $exit : null), $output, $timedOut, $truncated);

@@ -50,7 +50,9 @@ final class PrivateKey
     {
         $text = self::normalize($text);
 
-        if ($text === '' || strlen($text) > self::MAX_TEXT_LENGTH || ! str_contains($text, 'PRIVATE KEY')) {
+        // Only OpenSSH, PEM (RSA/EC) and PKCS#8 text: other formats phpseclib reads
+        // (PuTTY's Argon2 among them) take their work factor from the key text.
+        if ($text === '' || strlen($text) > self::MAX_TEXT_LENGTH || preg_match('/\A-----BEGIN (?:OPENSSH |RSA |EC |ENCRYPTED )?PRIVATE KEY-----\n/', $text) !== 1) {
             throw InvalidPrivateKey::unsupported();
         }
 

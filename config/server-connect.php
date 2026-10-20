@@ -14,11 +14,11 @@ return [
     'max_output_bytes' => max(65536, (int) env('SERVER_CONNECT_MAX_OUTPUT_BYTES', 4 * 1024 * 1024)),
 
     // Allow loopback and this machine's own addresses as targets.
-    'allow_local' => (bool) env('SERVER_CONNECT_ALLOW_LOCAL', false),
+    'allow_local' => filter_var(env('SERVER_CONNECT_ALLOW_LOCAL', false), FILTER_VALIDATE_BOOLEAN),
 
     // Allow private networks (10/8, 172.16/12, 192.168/16, 100.64/10, fc00::/7).
     // Leave off in a multi-tenant app: users could reach your internal network.
-    'allow_private' => (bool) env('SERVER_CONNECT_ALLOW_PRIVATE', false),
+    'allow_private' => filter_var(env('SERVER_CONNECT_ALLOW_PRIVATE', false), FILTER_VALIDATE_BOOLEAN),
 
     // Host names or IPs this application is reached at (refused as targets).
     // APP_URL's host and this machine's interface addresses are always included.

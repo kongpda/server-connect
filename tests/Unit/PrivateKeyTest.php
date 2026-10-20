@@ -85,3 +85,29 @@ test('refuses keys whose passphrase work factor would hold a worker', function (
         ->and(fn () => PrivateKey::load("-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----", 'x'))
         ->toThrow(InvalidPrivateKey::class, 'PKCS#8');
 });
+
+test('refuses PuTTY keys, whose Argon2 cost comes from the key text', function () {
+    // A comment that looks like an encrypted PEM key once let this past the work-factor check.
+    $blob = explode(' ', keyFixture('ed25519_plain.pub'))[1];
+    $text = implode("\n", [
+        'PuTTY-User-Key-File-3: ssh-ed25519',
+        'Encryption: aes256-cbc',
+        'Comment: PRIVATE KEY Proc-Type: 4,ENCRYPTED',
+        'Public-Lines: 2',
+        ...str_split($blob, 64),
+        'Key-Derivation: Argon2id',
+        'Argon2-Memory: 65536',
+        'Argon2-Passes: 50',
+        'Argon2-Parallelism: 1',
+        'Argon2-Salt: 00112233445566778899aabbccddeeff',
+        'Private-Lines: 1',
+        base64_encode(random_bytes(48)),
+        'Private-MAC: '.str_repeat('00', 32),
+    ]);
+
+    $started = microtime(true);
+
+    expect(fn () => PrivateKey::load($text, 'x'))->toThrow(fn (InvalidPrivateKey $e) => expect($e->reason)->toBe(InvalidPrivateKey::UNSUPPORTED))
+        ->and(microtime(true) - $started)->toBeLessThan(0.5)
+        ->and(fn () => PrivateKey::load("junk\n".keyFixture('ed25519_plain')))->toThrow(InvalidPrivateKey::class);
+});

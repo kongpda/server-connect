@@ -34,8 +34,18 @@ final readonly class Target
             throw new InvalidTarget('The host must not start with "-".');
         }
 
-        if (strlen($host) > 253 || preg_match('/^[A-Za-z0-9._:\[\]-]+$/', $host) !== 1) {
+        if (strlen($host) > 253 || preg_match('/\A[A-Za-z0-9._:\[\]-]+\z/', $host) !== 1) {
             throw new InvalidTarget('Use only letters, digits and . - _ : [ ] in the host (an IP address or a host name, without a user or port).');
+        }
+
+        // Brackets only around an IPv6 address; otherwise an IP or dot-separated labels.
+        $bracketed = preg_match('/\A\[([^\[\]]+)\]\z/', $host, $match) === 1;
+        $valid = $bracketed
+            ? filter_var($match[1], FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false
+            : filter_var($host, FILTER_VALIDATE_IP) !== false || preg_match('/\A[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.?\z/', $host) === 1;
+
+        if (! $valid) {
+            throw new InvalidTarget('Enter only an IP address or a host name, without a user or port.');
         }
     }
 

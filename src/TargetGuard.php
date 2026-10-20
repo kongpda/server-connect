@@ -224,7 +224,7 @@ final class TargetGuard
      */
     private static function dnsLookup(string $host): array
     {
-        if (preg_match('/^[A-Za-z0-9.-]+$/', $host) !== 1) {
+        if (preg_match('/\A[A-Za-z0-9.-]+\z/', $host) !== 1) {
             return [];
         }
 

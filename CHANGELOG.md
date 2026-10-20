@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `PrivateKey::load()` read PuTTY keys, whose Argon2 cost comes from the key
+  text, so a pasted key could hold a worker past the work-factor cap. Only
+  OpenSSH, PEM (RSA/EC) and PKCS#8 text starting with its `-----BEGIN` line is
+  accepted now.
+- stderr didn't count toward memory use: phpseclib kept its own uncapped copy
+  of it. That copy is now dropped as it arrives.
+- A command that ended without an exit status (killed by a signal) reported
+  the previous command's exit code, so it could look successful. It is now
+  null.
+- Closing a timed-out command could wait forever while the server kept
+  sending. After 5 s the connection is dropped and the result still reports
+  the timeout.
+- `SERVER_CONNECT_ALLOW_PRIVATE` and `SERVER_CONNECT_ALLOW_LOCAL` turned on for
+  any non-empty value, including `off` and `no`. Only true values (`true`,
+  `1`, `on`, `yes`) turn them on now. If you published the config file,
+  publish it again or make the same change.
+- `Target` accepted a host with a trailing newline, and strings like
+  `1.2.3.4:22` or `[example.com]`. It now accepts only an IP address, a
+  bracketed IPv6 address or a host name.
+
 ## 0.3.0
 
 Security hardening after a review that assumed a hostile server. Some

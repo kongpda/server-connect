@@ -8,7 +8,8 @@ use Kongpda\ServerConnect\TargetGuard;
 test('accepts plain hosts, IPv6 literals and login names', function () {
     expect((string) new Target('203.0.113.10', 22, 'root'))->toBe('root@203.0.113.10')
         ->and((string) new Target('ci-1.example.com', 2222, 'deploy'))->toBe('deploy@ci-1.example.com:2222')
-        ->and((string) new Target('[2001:db8::1]', 22, 'root'))->toBe('root@[2001:db8::1]');
+        ->and((string) new Target('[2001:db8::1]', 22, 'root'))->toBe('root@[2001:db8::1]')
+        ->and((string) new Target('2001:db8::1', 22, 'root'))->toBe('root@[2001:db8::1]');
 });
 
 test('refuses option injection and smuggled users', function (string $host, string $user, int $port) {
@@ -21,6 +22,14 @@ test('refuses option injection and smuggled users', function (string $host, stri
     'space in user' => ['example.com', 'ro ot', 22],
     'newline in user' => ['example.com', "root\nx", 22],
     'empty host' => ['', 'root', 22],
+    // A trailing newline would reach logs and messages that quote the host.
+    'newline after host' => ["example.com\n", 'root', 22],
+    'newline after IP' => ["203.0.113.5\n", 'root', 22],
+    // Only a bare host: a port or brackets around a name aren't what they look like.
+    'port in host' => ['203.0.113.5:22', 'root', 22],
+    'port after IPv6' => ['[2001:db8::1]:22', 'root', 22],
+    'brackets around a name' => ['[example.com]', 'root', 22],
+    'empty label' => ['example..com', 'root', 22],
     'port 0' => ['example.com', 'root', 0],
     'port too big' => ['example.com', 'root', 70000],
 ])->throws(InvalidTarget::class);

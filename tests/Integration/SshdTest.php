@@ -136,6 +136,30 @@ test('runs commands with stdin, exit codes, stderr, streaming and a wall-clock t
     expect($facts->isLinux())->toBeTrue()->and($facts->normalizedArch())->not->toBeNull()->and($facts->isRoot)->toBeFalse();
 });
 
+test('a killed command has no exit code, even after one that succeeded', function () {
+    // phpseclib keeps the last exit status; reusing it would make a killed command look successful.
+    $session = $this->connector->connect($this->target, $this->address, Credentials::password($this->password), fn () => null);
+
+    $ok = $session->run('exit 0');
+    $killed = $session->run('kill -9 $$');
+    $session->disconnect();
+
+    expect($ok->exitCode)->toBe(0)->and($killed->exitCode)->toBeNull()->and($killed->successful())->toBeFalse();
+});
+
+test('stderr counts toward the output cap and is not kept in memory', function () {
+    $capped = new PhpseclibConnector(8, 5, maxOutputBytes: 1000);
+    $session = $capped->connect($this->target, $this->address, Credentials::password($this->password), fn () => null);
+
+    memory_reset_peak_usage();
+    $before = memory_get_usage();
+    $result = $session->run('head -c 30000000 /dev/zero >&2');
+    $session->disconnect();
+
+    expect($result->truncated)->toBeTrue()->and(strlen($result->output))->toBe(1000)
+        ->and(memory_get_peak_usage() - $before)->toBeLessThan(10 * 1024 * 1024);
+});
+
 test('a closed port is unreachable, quickly', function () {
     $started = microtime(true);
 

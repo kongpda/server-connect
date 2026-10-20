@@ -120,8 +120,11 @@ What it does for you:
 - **A hostile server can't hold a worker.** The greeting must arrive within
   the connect timeout and the first 8 KB. RSA host keys with a huge modulus or
   exponent are refused before their signature is checked. Commands have a
-  wall-clock timeout and an output cap.
-- **A pasted key can't hold a worker.** Key derivation rounds are capped.
+  wall-clock timeout and an output cap that covers stderr too. If closing a
+  timed-out command takes more than 5 s, the connection is dropped.
+- **A pasted key can't hold a worker.** Key derivation rounds are capped, and
+  only OpenSSH, PEM and PKCS#8 key text is read (PuTTY keys set their own
+  Argon2 cost).
 - **Secrets stay out of places they leak from.** `PrivateKey`, `Credentials`
   and sessions don't print or serialize, the connection forgets credentials
   after login, login errors never echo phpseclib's messages, and
@@ -138,8 +141,10 @@ What stays your app's job:
 - **Prefer a verified fingerprint over trust on first use** when a password
   is about to be sent: a man in the middle on the first connection would get
   it.
-- **Run connections in queued jobs with a timeout.** DNS lookups and some
-  handshake stalls aren't covered by this package's timeouts.
+- **Run connections in queued jobs with a timeout.** DNS lookups, some
+  handshake stalls, and a server that floods SSH control messages (which
+  phpseclib handles internally, out of this package's reach) aren't covered by
+  this package's timeouts.
 - **Keep `allowPrivate` and `allowLocal` off** in a multi-tenant app.
 - **Remove the key from `authorized_keys`** when a server is removed, or tell
   the user how.
