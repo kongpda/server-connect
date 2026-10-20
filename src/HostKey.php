@@ -33,9 +33,11 @@ final readonly class HostKey
     /**
      * Parse an OpenSSH public key line ("ssh-ed25519 AAAA… comment").
      *
+     * @param  int  $minRsaBits  refuse RSA keys with a shorter modulus (0: any)
+     *
      * @throws InvalidHostKey
      */
-    public static function parse(string $line): self
+    public static function parse(string $line, int $minRsaBits = 0): self
     {
         $line = trim($line);
 
@@ -55,15 +57,16 @@ final readonly class HostKey
             throw new InvalidHostKey('The key data is not valid base64.');
         }
 
-        return self::fromBlob($blob, $parts[0]);
+        return self::fromBlob($blob, $parts[0], $minRsaBits);
     }
 
     /**
      * @param  string|null  $declared  The type the line or server declared, checked against the blob.
+     * @param  int  $minRsaBits  refuse RSA keys with a shorter modulus (0: any)
      *
      * @throws InvalidHostKey
      */
-    public static function fromBlob(string $blob, ?string $declared = null): self
+    public static function fromBlob(string $blob, ?string $declared = null, int $minRsaBits = 0): self
     {
         $reader = new WireReader($blob);
         $algorithm = $reader->string();
@@ -79,7 +82,11 @@ final readonly class HostKey
             }
         } elseif ($algorithm === 'ssh-rsa') {
             $reader->string();
-            $reader->string();
+            $bits = self::bitLength($reader->string());
+
+            if ($bits < $minRsaBits) {
+                throw new InvalidHostKey("RSA host keys must be at least {$minRsaBits} bits. This one is {$bits}.");
+            }
         } elseif (isset(self::ECDSA[$algorithm])) {
             [$curve, $pointLength] = self::ECDSA[$algorithm];
             $keyCurve = $reader->string();
@@ -125,5 +132,35 @@ final readonly class HostKey
     public function matchesFingerprint(string $fingerprint): bool
     {
         return hash_equals($fingerprint, $this->fingerprint());
+    }
+
+    /**
+     * The RSA modulus length in bits, or null for other key types.
+     */
+    public function rsaBits(): ?int
+    {
+        if ($this->algorithm !== 'ssh-rsa') {
+            return null;
+        }
+
+        $reader = new WireReader($this->blob);
+        $reader->string();
+        $reader->string();
+
+        return self::bitLength($reader->string());
+    }
+
+    /**
+     * Bit length of an SSH mpint.
+     */
+    public static function bitLength(string $mpint): int
+    {
+        $magnitude = ltrim($mpint, "\x00");
+
+        if ($magnitude === '') {
+            return 0;
+        }
+
+        return (strlen($magnitude) - 1) * 8 + strlen(decbin(ord($magnitude[0])));
     }
 }

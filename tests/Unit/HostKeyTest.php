@@ -53,3 +53,13 @@ test('the pinned policy trusts on first use and blocks a changed key before auth
             ->and($exception->getMessage())->toContain($pinned, $other->fingerprint(), 'rebuilt');
     }
 });
+
+test('a minimum RSA size refuses shorter RSA host keys and leaves other types alone', function () {
+    $rsa = keyFixture('rsa_passphrase.pub');
+    $bits = HostKey::parse($rsa)->rsaBits();
+
+    expect($bits)->toBeInt()->toBeGreaterThanOrEqual(2048)
+        ->and(HostKey::parse($rsa, minRsaBits: $bits)->rsaBits())->toBe($bits)
+        ->and(HostKey::parse(keyFixture('ed25519_plain.pub'), minRsaBits: 4096)->rsaBits())->toBeNull()
+        ->and(fn () => HostKey::parse($rsa, minRsaBits: $bits + 1))->toThrow(InvalidHostKey::class, 'RSA host keys must be at least '.($bits + 1)." bits. This one is {$bits}.");
+});
