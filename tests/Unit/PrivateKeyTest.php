@@ -51,11 +51,37 @@ test('refuses text that is not a private key', function (string $text) {
 ]);
 
 test('generates Ed25519 keys and never prints the private part', function () {
-    $key = PrivateKey::generateEd25519('proofr@ci.example.com');
+    $key = PrivateKey::generateEd25519('deploy@ci.example.com');
 
-    expect($key->publicLine)->toStartWith('ssh-ed25519 ')->toEndWith(' proofr@ci.example.com')
+    expect($key->publicLine)->toStartWith('ssh-ed25519 ')->toEndWith(' deploy@ci.example.com')
         ->and(print_r($key, true))->not->toContain('PRIVATE')
         ->and(PrivateKey::load($key->toOpenSsh())->fingerprint())->toBe($key->fingerprint());
 
     expect(fn () => serialize($key))->toThrow(LogicException::class);
+});
+
+/**
+ * The fixture with its bcrypt rounds replaced.
+ */
+function withKdfRounds(string $text, int $rounds): string
+{
+    $binary = (string) base64_decode((string) preg_replace('/-----[^-]+-----|\s+/', '', $text), true);
+    $offset = 15;
+    $offset += 4 + unpack('N', substr($binary, $offset, 4))[1]; // cipher
+    $offset += 4 + unpack('N', substr($binary, $offset, 4))[1]; // kdf name
+    $offset += 4; // kdf options length
+    $offset += 4 + unpack('N', substr($binary, $offset, 4))[1]; // salt
+    $binary = substr_replace($binary, pack('N', $rounds), $offset, 4);
+
+    return "-----BEGIN OPENSSH PRIVATE KEY-----\n".chunk_split(base64_encode($binary), 70, "\n")."-----END OPENSSH PRIVATE KEY-----\n";
+}
+
+test('refuses keys whose passphrase work factor would hold a worker', function () {
+    $text = keyFixture('ed25519_passphrase');
+
+    expect(fn () => PrivateKey::load(withKdfRounds($text, 0xFFFFFFFF), 'correct horse'))
+        ->toThrow(fn (InvalidPrivateKey $e) => expect($e->getMessage())->toContain('at most '.PrivateKey::MAX_KDF_ROUNDS))
+        ->and(fn () => PrivateKey::load(withKdfRounds($text, 0), 'correct horse'))->toThrow(InvalidPrivateKey::class)
+        ->and(fn () => PrivateKey::load("-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----", 'x'))
+        ->toThrow(InvalidPrivateKey::class, 'PKCS#8');
 });

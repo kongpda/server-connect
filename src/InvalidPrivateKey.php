@@ -34,6 +34,6 @@ final class InvalidPrivateKey extends InvalidArgumentException
 
     public static function unsupported(): self
     {
-        return new self('This is not a private key Proofr can use. Paste an OpenSSH (BEGIN OPENSSH PRIVATE KEY) or PEM (BEGIN RSA/EC PRIVATE KEY) Ed25519, ECDSA or RSA private key.', self::UNSUPPORTED);
+        return new self('This is not a supported private key. Paste an OpenSSH (BEGIN OPENSSH PRIVATE KEY) or PEM (BEGIN RSA/EC PRIVATE KEY) Ed25519, ECDSA or RSA private key.', self::UNSUPPORTED);
     }
 }

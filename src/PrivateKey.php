@@ -22,6 +22,13 @@ final class PrivateKey
 
     public const MIN_RSA_BITS = 2048;
 
+    /**
+     * The most bcrypt KDF rounds a passphrase-protected OpenSSH key may use.
+     * The work factor comes from the key text, and opening takes about half
+     * a second per round in pure PHP.
+     */
+    public const MAX_KDF_ROUNDS = 64;
+
     private function __construct(
         private readonly PhpseclibPrivateKey $key,
         public readonly string $type,
@@ -52,6 +59,10 @@ final class PrivateKey
 
         if ($encrypted && $passphrase === null) {
             throw InvalidPrivateKey::passphraseRequired();
+        }
+
+        if ($encrypted) {
+            self::checkWorkFactor($text);
         }
 
         try {
@@ -100,9 +111,48 @@ final class PrivateKey
     }
 
     /**
+     * Refuse encrypted keys that would take too long to open: a key's own
+     * text sets the work factor, so a pasted key could hold a worker for years.
+     *
+     * @throws InvalidPrivateKey
+     */
+    private static function checkWorkFactor(string $text): void
+    {
+        if (str_contains($text, 'BEGIN ENCRYPTED PRIVATE KEY')) {
+            // PKCS#8 sets its own PBKDF2 iteration count; not worth parsing.
+            throw new InvalidPrivateKey('Encrypted PKCS#8 keys are not supported. Convert the key to OpenSSH format first: ssh-keygen -p -f <key-file>.', InvalidPrivateKey::UNSUPPORTED);
+        }
+
+        if (! str_contains($text, 'BEGIN OPENSSH PRIVATE KEY')) {
+            return; // legacy PEM encryption is a single MD5 pass
+        }
+
+        $binary = base64_decode((string) preg_replace('/-----[^-]+-----|\s+/', '', $text), true);
+
+        try {
+            $reader = new WireReader(substr((string) $binary, 15));
+            $reader->string(); // cipher
+            $kdf = $reader->string();
+            $options = new WireReader($reader->string());
+            $options->string(); // salt
+            $rounds = $options->uint32();
+        } catch (InvalidHostKey) {
+            throw InvalidPrivateKey::unsupported();
+        }
+
+        if ($kdf !== 'bcrypt') {
+            throw InvalidPrivateKey::unsupported();
+        }
+
+        if ($rounds < 1 || $rounds > self::MAX_KDF_ROUNDS) {
+            throw new InvalidPrivateKey('This key\'s passphrase uses '.$rounds.' KDF rounds; at most '.self::MAX_KDF_ROUNDS.' are accepted. Re-save it with fewer: ssh-keygen -p -a 16 -f <key-file>.', InvalidPrivateKey::UNSUPPORTED);
+        }
+    }
+
+    /**
      * The private key in OpenSSH format, unencrypted or encrypted with
-     * $passphrase (bcrypt KDF; OpenSSH's default is 16 rounds, about 10 s to
-     * open in pure PHP).
+     * $passphrase (bcrypt KDF; 16 rounds is OpenSSH's default and takes
+     * several seconds to open in pure PHP; at most MAX_KDF_ROUNDS).
      */
     public function toOpenSsh(#[SensitiveParameter] ?string $passphrase = null, int $rounds = 16): string
     {
@@ -110,7 +160,7 @@ final class PrivateKey
         $options = $this->comment() !== '' ? ['comment' => $this->comment()] : [];
 
         if ($passphrase !== null && $passphrase !== '') {
-            $options['rounds'] = max(1, $rounds);
+            $options['rounds'] = min(self::MAX_KDF_ROUNDS, max(1, $rounds));
         }
 
         return $key->toString('OpenSSH', $options);

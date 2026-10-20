@@ -10,6 +10,8 @@ final readonly class CommandResult
         public ?int $exitCode,
         public string $output,
         public bool $timedOut = false,
+        // The output went over the session's limit; only its start is kept.
+        public bool $truncated = false,
     ) {}
 
     public function successful(): bool

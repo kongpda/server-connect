@@ -5,10 +5,9 @@ declare(strict_types=1);
 namespace Kongpda\ServerConnect\Recipes;
 
 /**
- * The closed set of server recipes (Debian/Ubuntu, apt). Ported from
- * DeployDesk's recipes: detect before acting, wait for first-boot package
- * jobs instead of failing, keep existing config files, validate before
- * reloading and roll back on failure.
+ * The closed set of server recipes (Debian/Ubuntu, apt). They detect
+ * before acting, wait for first-boot package jobs instead of failing, keep
+ * existing config files, validate before reloading and roll back on failure.
  */
 final class Recipes
 {
@@ -120,7 +119,7 @@ SH,
             new Recipe(
                 id: 'ufw',
                 label: 'Enable the firewall (UFW)',
-                summary: 'Denies all inbound traffic except SSH on the port this connection uses (plus any extra ports you list). Outbound traffic is not limited.',
+                summary: 'Denies all inbound traffic except SSH on the ports sshd listens on (plus any extra ports you list). Outbound traffic is not limited.',
                 group: RecipeGroup::Prepare,
                 safety: SafetyLevel::HighRisk,
                 prepareOrder: 4,
@@ -128,7 +127,9 @@ SH,
                 body: <<<'SH'
 { command -v ufw >/dev/null 2>&1 || { $APT update && $APT install ufw; }; } || exit 1
 $SUDO ufw default deny incoming >/dev/null && $SUDO ufw default allow outgoing >/dev/null || exit 1
-$SUDO ufw allow "${SSH_PORT}/tcp" || exit 1
+# sshd's own ports: behind NAT or a port forward, the port this connection uses is a different one.
+P=$($SUDO sshd -T 2>/dev/null | awk '$1=="port"{print $2}'); [ -n "$P" ] || P=$SSH_PORT
+for p in $P; do $SUDO ufw allow "${p}/tcp" || exit 1; done
 for p in $EXTRA_PORTS; do $SUDO ufw allow "$p" || echo "skipped invalid port: $p"; done
 $SUDO ufw --force enable && $SUDO ufw status verbose
 SH,
@@ -136,7 +137,7 @@ SH,
             new Recipe(
                 id: 'fail2ban',
                 label: 'Install fail2ban',
-                summary: 'Bans IPs that keep failing SSH logins, watching the SSH port this connection uses.',
+                summary: 'Bans IPs that keep failing SSH logins, watching the ports sshd listens on.',
                 group: RecipeGroup::Prepare,
                 safety: SafetyLevel::Mutating,
                 prepareOrder: 5,
@@ -144,7 +145,8 @@ SH,
                 body: <<<'SH'
 $APT update && $APT install fail2ban || exit 1
 if [ -f /var/log/auth.log ]; then B=auto; else B=systemd; $APT install python3-systemd >/dev/null 2>&1 || true; fi
-printf '[sshd]\nenabled = true\nport = %s\nbackend = %s\n' "$SSH_PORT" "$B" | $SUDO tee /etc/fail2ban/jail.d/server-connect.conf >/dev/null || exit 1
+P=$($SUDO sshd -T 2>/dev/null | awk '$1=="port"{print $2}' | paste -sd, -); [ -n "$P" ] || P=$SSH_PORT
+printf '[sshd]\nenabled = true\nport = %s\nbackend = %s\n' "$P" "$B" | $SUDO tee /etc/fail2ban/jail.d/server-connect.conf >/dev/null || exit 1
 $SUDO systemctl enable fail2ban >/dev/null 2>&1; $SUDO systemctl restart fail2ban && $SUDO systemctl --no-pager status fail2ban | head -n 5
 SH,
             ),
@@ -165,7 +167,7 @@ SH,
             new Recipe(
                 id: 'harden-ssh',
                 label: 'Harden SSH (key-only logins)',
-                summary: 'Turns off SSH password logins (root keys still work) with a drop-in file, validated with sshd -t before a reload (open sessions stay up) and rolled back if it does not take effect. Run it only after key login works.',
+                summary: 'Turns off SSH password logins (root keys still work; a stricter PermitRootLogin is kept) with a drop-in file, validated with sshd -t before a reload (open sessions stay up) and rolled back if it does not take effect. Run it only after key login works.',
                 group: RecipeGroup::Prepare,
                 safety: SafetyLevel::HighRisk,
                 prepareOrder: 7,
@@ -173,7 +175,9 @@ SH,
                 body: <<<'SH'
 if ! $SUDO grep -qiE '^[[:space:]]*Include[[:space:]].*sshd_config\.d' /etc/ssh/sshd_config; then echo "/etc/ssh/sshd_config doesn't include /etc/ssh/sshd_config.d, so nothing was changed. Harden it by hand."; exit 1; fi
 F=/etc/ssh/sshd_config.d/00-server-connect.conf
-printf '# Managed by server-connect: key-only SSH logins.\nPermitRootLogin prohibit-password\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n' | $SUDO tee "$F" >/dev/null && $SUDO chmod 644 "$F" || { $SUDO rm -f "$F"; exit 1; }
+# Only tighten PermitRootLogin: this file is read first, so it would override a stricter "no".
+R=''; if [ "$($SUDO sshd -T 2>/dev/null | awk '$1=="permitrootlogin"{print $2}')" = yes ]; then R='PermitRootLogin prohibit-password\n'; fi
+printf "# Managed by server-connect: key-only SSH logins.\n${R}PasswordAuthentication no\nKbdInteractiveAuthentication no\n" | $SUDO tee "$F" >/dev/null && $SUDO chmod 644 "$F" || { $SUDO rm -f "$F"; exit 1; }
 if ! $SUDO sshd -t; then echo 'sshd rejected the new config: rolled back, nothing changed.'; $SUDO rm -f "$F"; exit 1; fi
 if systemctl is-active --quiet ssh 2>/dev/null || systemctl is-active --quiet sshd 2>/dev/null; then
   if $SUDO systemctl reload ssh 2>/dev/null || $SUDO systemctl reload sshd 2>/dev/null; then echo 'sshd reloaded (open sessions stay connected).'; else echo 'Could not reload sshd: rolled back.'; $SUDO rm -f "$F"; exit 1; fi

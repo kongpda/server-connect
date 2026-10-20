@@ -110,6 +110,23 @@ test('runs commands with stdin, exit codes, stderr, streaming and a wall-clock t
     $started = microtime(true);
     $slow = $session->run('sleep 30', '', null, 3);
     expect($slow->timedOut)->toBeTrue()->and(microtime(true) - $started)->toBeLessThan(10);
+
+    // A command that keeps printing still times out.
+    $started = microtime(true);
+    $chatty = $session->run('while :; do echo tick; sleep 1; done', '', null, 3);
+    expect($chatty->timedOut)->toBeTrue()->and(microtime(true) - $started)->toBeLessThan(6);
+    $session->disconnect();
+
+    // Output beyond the limit is dropped from the result but still streamed.
+    $capped = new PhpseclibConnector(8, 5, maxOutputBytes: 1000);
+    $session = $capped->connect($this->target, $this->address, Credentials::key($key), fn () => null);
+    $seen = 0;
+    $big = $session->run('head -c 5000 /dev/zero | tr "\\0" x', '', function (string $chunk) use (&$seen) {
+        $seen += strlen($chunk);
+    });
+    expect($big->truncated)->toBeTrue()->and(strlen($big->output))->toBe(1000)->and($seen)->toBe(5000)
+        ->and(print_r($session, true))->not->toContain('auth')
+        ->and(fn () => serialize($session))->toThrow(LogicException::class);
     $session->disconnect();
 
     $session = $this->connector->connect($this->target, $this->address, Credentials::key($key), fn () => null);

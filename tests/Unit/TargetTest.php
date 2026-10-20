@@ -25,17 +25,35 @@ test('refuses option injection and smuggled users', function (string $host, stri
     'port too big' => ['example.com', 'root', 70000],
 ])->throws(InvalidTarget::class);
 
-test('the guard refuses loopback, metadata and multicast, and allows private networks', function () {
+test('the guard refuses loopback, metadata, multicast and private networks by default', function (string $address) {
+    expect(fn () => (new TargetGuard)->resolve($address))
+        ->toThrow(fn (SshException $e) => expect($e->reason)->toBe(SshException::REFUSED_TARGET));
+})->with([
+    '127.0.0.1', '::1', '0.0.0.0', '169.254.169.254', 'fe80::1', '224.0.0.1', '::ffff:127.0.0.1',
+    '10.0.0.5', '172.17.0.1', '192.168.1.20', '100.64.1.2', '100.100.100.200', 'fd00:ec2::254', 'fec0::1',
+    '192.0.0.170', '198.18.0.1', '64:ff9b:1::a00:5', '::ffff:0:a9fe:a9fe', '100::1',
+]);
+
+test('the guard allows public addresses, and private networks when asked', function () {
     $guard = new TargetGuard;
+    $private = new TargetGuard(allowPrivate: true);
 
-    foreach (['127.0.0.1', '::1', '0.0.0.0', '169.254.169.254', 'fe80::1', '224.0.0.1', '::ffff:127.0.0.1'] as $address) {
-        expect(fn () => $guard->resolve($address))->toThrow(fn (SshException $e) => expect($e->reason)->toBe(SshException::REFUSED_TARGET));
-    }
+    expect($guard->resolve('203.0.113.10'))->toBe('203.0.113.10')
+        ->and($guard->resolve('[2001:db8::1]'))->toBe('2001:db8::1')
+        ->and($private->resolve('10.0.0.5'))->toBe('10.0.0.5')
+        ->and($private->resolve('192.168.1.20'))->toBe('192.168.1.20')
+        ->and($private->resolve('100.64.1.2'))->toBe('100.64.1.2')
+        ->and($private->resolve('fd12::5'))->toBe('fd12::5')
+        ->and(fn () => $private->resolve('169.254.169.254'))->toThrow(SshException::class, 'link-local')
+        ->and(fn () => $private->resolve('127.0.0.1'))->toThrow(SshException::class, 'loopback');
+});
 
-    expect($guard->resolve('10.0.0.5'))->toBe('10.0.0.5')
-        ->and($guard->resolve('192.168.1.20'))->toBe('192.168.1.20')
-        ->and($guard->resolve('100.64.1.2'))->toBe('100.64.1.2')
-        ->and($guard->resolve('[2001:db8::1]'))->toBe('2001:db8::1');
+test('this machine\'s interface addresses count as its own', function () {
+    $guard = new TargetGuard(interfaceAddresses: ['203.0.113.77', '2001:db8::77']);
+
+    expect(fn () => $guard->resolve('203.0.113.77'))->toThrow(SshException::class, 'own server')
+        ->and(fn () => $guard->resolve('2001:db8:0::77'))->toThrow(SshException::class, 'own server')
+        ->and($guard->resolve('203.0.113.78'))->toBe('203.0.113.78');
 });
 
 test('the guard sees through IPv4 addresses wrapped in IPv6', function (string $address) {
@@ -50,7 +68,7 @@ test('the guard sees through IPv4 addresses wrapped in IPv6', function (string $
 ]);
 
 test('wrapped addresses of this application count as its own', function () {
-    $guard = new TargetGuard(false, ['203.0.113.5']);
+    $guard = new TargetGuard(false, [' 203.0.113.5 '], allowPrivate: true);
 
     expect(fn () => $guard->resolve('64:ff9b::cb00:7105'))->toThrow(SshException::class, 'own server')
         ->and($guard->resolve('64:ff9b::a00:5'))->toBe('64:ff9b::a00:5');

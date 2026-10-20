@@ -29,8 +29,19 @@ test('every recipe script is valid sh with the shims and the SSH port bound', fu
     }
 });
 
-test('the firewall keeps the SSH port open', function () {
-    expect(Recipes::find('ufw')?->script(2222))->toContain('ufw allow "${SSH_PORT}/tcp"');
+test('the firewall keeps the ports sshd listens on open, falling back to the connection port', function () {
+    expect(Recipes::find('ufw')?->script(2222))
+        ->toContain("sshd -T 2>/dev/null | awk '\$1==\"port\"{print \$2}'")
+        ->toContain('[ -n "$P" ] || P=$SSH_PORT')
+        ->toContain('ufw allow "${p}/tcp"');
+});
+
+test('hardening SSH only tightens PermitRootLogin when it is yes', function () {
+    $script = (string) Recipes::find('harden-ssh')?->script(22);
+
+    expect($script)->toContain('permitrootlogin')
+        ->toContain('= yes ]; then R=\'PermitRootLogin prohibit-password')
+        ->not->toContain('\\nPermitRootLogin prohibit-password\\nPasswordAuthentication');
 });
 
 test('params are validated and quoted, and unknown ones never reach the shell', function () {

@@ -41,6 +41,27 @@ final class WireReader
         return $value;
     }
 
+    /**
+     * Read a big-endian 32-bit integer and advance past it.
+     *
+     * @phpstan-impure
+     *
+     * @throws InvalidHostKey
+     */
+    public function uint32(): int
+    {
+        $bytes = substr($this->data, $this->offset, 4);
+
+        if (strlen($bytes) !== 4) {
+            throw new InvalidHostKey('The key data is truncated.');
+        }
+
+        $this->offset += 4;
+        $unpacked = unpack('N', $bytes);
+
+        return is_array($unpacked) && is_int($unpacked[1] ?? null) ? $unpacked[1] : 0;
+    }
+
     public function atEnd(): bool
     {
         return $this->offset === strlen($this->data);

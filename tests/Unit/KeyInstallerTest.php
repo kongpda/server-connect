@@ -13,7 +13,7 @@ beforeEach(function () {
     $this->server = new FakeConnector;
     $this->server->passwords = ['hunter2'];
     $this->server->authorizedKeys = [];
-    $this->key = PrivateKey::generateEd25519('proofr@test');
+    $this->key = PrivateKey::generateEd25519('app@test');
     $this->target = new Target('203.0.113.10', 22, 'root');
     $this->trust = HostKeyPolicy::pinned(null, fn () => null);
 });
@@ -87,4 +87,21 @@ test('credentials never serialize or dump their secret', function () {
 
     expect(print_r($credentials, true))->not->toContain('hunter2')
         ->and(fn () => serialize($credentials))->toThrow(LogicException::class);
+});
+
+test('the check after installing must reach the same server, even on first use', function () {
+    $pinned = [];
+    $trust = HostKeyPolicy::pinned(null, function ($key) use (&$pinned) {
+        $pinned[] = $key->fingerprint();
+    });
+    $this->server->on(KeyInstaller::MARKER, function (): array {
+        $this->server->hostKey = FakeConnector::randomHostKey(); // another machine answers next
+
+        return [KeyInstaller::OK_MARKER."\n", 0];
+    });
+
+    expect(fn () => (new KeyInstaller($this->server))->install($this->target, '203.0.113.10', 'hunter2', $this->key, $trust))
+        ->toThrow(HostKeyChanged::class);
+    expect($pinned)->toHaveCount(1)
+        ->and($this->server->connections)->toHaveCount(1);
 });

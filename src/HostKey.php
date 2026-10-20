@@ -14,6 +14,8 @@ final readonly class HostKey
 {
     public const MAX_LINE_LENGTH = 8192;
 
+    public const MAX_RSA_BITS = 16384;
+
     /**
      * ECDSA key types, their curve names and uncompressed point lengths.
      *
@@ -81,8 +83,17 @@ final readonly class HostKey
                 throw new InvalidHostKey('The ed25519 key has the wrong length.');
             }
         } elseif ($algorithm === 'ssh-rsa') {
-            $reader->string();
+            $exponentBits = self::bitLength($reader->string());
             $bits = self::bitLength($reader->string());
+
+            // A huge modulus or exponent makes verifying a signature take hours.
+            if ($exponentBits > 32) {
+                throw new InvalidHostKey('The RSA key has an unusually large public exponent.');
+            }
+
+            if ($bits > self::MAX_RSA_BITS) {
+                throw new InvalidHostKey('RSA host keys may be at most '.self::MAX_RSA_BITS." bits. This one is {$bits}.");
+            }
 
             if ($bits < $minRsaBits) {
                 throw new InvalidHostKey("RSA host keys must be at least {$minRsaBits} bits. This one is {$bits}.");

@@ -49,6 +49,17 @@ final class KeyInstaller
             throw new SshException('The public key is not a plain OpenSSH key line.', SshException::AUTHENTICATION);
         }
 
+        // Whatever the caller's check, the second connection must reach the same server.
+        $seen = null;
+        $verifyHostKey = function (HostKey $presented) use (&$seen, $verifyHostKey): void {
+            if ($seen !== null && ! $presented->equals($seen)) {
+                throw new HostKeyChanged($presented, $seen->fingerprint());
+            }
+
+            $verifyHostKey($presented);
+            $seen = $presented;
+        };
+
         $session = $this->connector->connect($target, $address, Credentials::password($password), $verifyHostKey);
 
         try {

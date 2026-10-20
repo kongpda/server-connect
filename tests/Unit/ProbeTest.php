@@ -71,7 +71,7 @@ passwordauthentication no
 @@DPKG@@
 free
 @@X_RUNNER@@
-proofr-runner 0.2.0
+myapp-agent 0.2.0
 @@END@@
 OUT;
 }
@@ -93,7 +93,7 @@ test('parses one probe into facts', function () {
         ->and($facts->ufwActive)->toBeTrue()->and($facts->fail2banActive)->toBeFalse()->and($facts->unattendedUpgrades)->toBeTrue()
         ->and($facts->swapPresent)->toBeTrue()
         ->and($facts->sshdPasswordAuth)->toBeFalse()->and($facts->sshdRootLogin)->toBe('prohibit-password')
-        ->and($facts->extra)->toBe(['RUNNER' => 'proofr-runner 0.2.0'])
+        ->and($facts->extra)->toBe(['RUNNER' => 'myapp-agent 0.2.0'])
         ->and($facts->toArray())->toHaveKeys(['os_name', 'provider', 'virtualization', 'docker_access']);
 });
 
@@ -114,12 +114,12 @@ test('the probe is one read-only round trip through sh -s', function () {
     $server = (new FakeConnector)->on(Probe::MARKER, [sampleProbeOutput(), 0]);
     $session = $server->connect(new Target('203.0.113.1', 22, 'root'), '203.0.113.1', Credentials::key(PrivateKey::generateEd25519()), HostKeyPolicy::pinned(null, fn () => null));
 
-    expect(Probe::run($session, ['RUNNER' => 'proofr-runner version 2>/dev/null'])->extra['RUNNER'])->toBe('proofr-runner 0.2.0')
+    expect(Probe::run($session, ['RUNNER' => 'myapp-agent version 2>/dev/null'])->extra['RUNNER'])->toBe('myapp-agent 0.2.0')
         ->and($server->commands)->toHaveCount(1)
         ->and($server->commands[0]['command'])->toBe('sh -s')
-        ->and($server->commands[0]['stdin'])->toContain('@@X_RUNNER@@; proofr-runner version');
+        ->and($server->commands[0]['stdin'])->toContain('@@X_RUNNER@@; myapp-agent version');
 
-    expect(shellSyntaxOk(Probe::script(['RUNNER' => 'proofr-runner version 2>/dev/null'])))->toBeTrue()
+    expect(shellSyntaxOk(Probe::script(['RUNNER' => 'myapp-agent version 2>/dev/null'])))->toBeTrue()
         ->and(fn () => Probe::script(['bad name' => 'x']))->toThrow(InvalidArgumentException::class);
 });
 

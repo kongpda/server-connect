@@ -63,3 +63,27 @@ test('a minimum RSA size refuses shorter RSA host keys and leaves other types al
         ->and(HostKey::parse(keyFixture('ed25519_plain.pub'), minRsaBits: 4096)->rsaBits())->toBeNull()
         ->and(fn () => HostKey::parse($rsa, minRsaBits: $bits + 1))->toThrow(InvalidHostKey::class, 'RSA host keys must be at least '.($bits + 1)." bits. This one is {$bits}.");
 });
+
+test('a first-use policy accepts one key, then only that key', function () {
+    $first = HostKey::parse(FakeConnector::randomHostKey());
+    $other = HostKey::parse(FakeConnector::randomHostKey());
+    $calls = 0;
+    $check = HostKeyPolicy::pinned(null, function () use (&$calls) {
+        $calls++;
+    });
+
+    $check($first);
+    $check($first);
+
+    expect($calls)->toBe(1)
+        ->and(fn () => $check($other))->toThrow(HostKeyChanged::class);
+});
+
+test('RSA keys with a huge exponent or modulus are refused before any signature check', function () {
+    $mpint = fn (int $bytes): string => pack('N', $bytes + 1)."\0".str_repeat("\xff", $bytes);
+    $rsa = fn (string $e, string $n): string => 'ssh-rsa '.base64_encode(pack('N', 7).'ssh-rsa'.$e.$n);
+
+    expect(HostKey::parse($rsa(pack('N', 3)."\x01\x00\x01", $mpint(256)))->rsaBits())->toBe(2048)
+        ->and(fn () => HostKey::parse($rsa($mpint(5), $mpint(256))))->toThrow(InvalidHostKey::class, 'exponent')
+        ->and(fn () => HostKey::parse($rsa(pack('N', 3)."\x01\x00\x01", $mpint(2049)), 0))->toThrow(InvalidHostKey::class, 'at most 16384 bits');
+});

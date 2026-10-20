@@ -14,15 +14,20 @@ use Closure;
 final class HostKeyPolicy
 {
     /**
+     * The returned check is stateful: on first use it calls $onFirstUse once
+     * and then accepts only that key, so a second connection made with the
+     * same check (KeyInstaller makes two) can't be answered by another server.
+     *
      * @param  string|null  $pinnedFingerprint  null on first use
      * @param  Closure(HostKey): void  $onFirstUse  pin the key (it is called before authentication)
      * @return Closure(HostKey): void
      */
     public static function pinned(?string $pinnedFingerprint, Closure $onFirstUse): Closure
     {
-        return function (HostKey $presented) use ($pinnedFingerprint, $onFirstUse): void {
+        return function (HostKey $presented) use (&$pinnedFingerprint, $onFirstUse): void {
             if ($pinnedFingerprint === null) {
                 $onFirstUse($presented);
+                $pinnedFingerprint = $presented->fingerprint();
 
                 return;
             }
