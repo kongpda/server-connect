@@ -1,13 +1,49 @@
 # kongpda/server-connect
 
-Connect to Linux servers over SSH from PHP without the usual sharp edges.
-It is framework-light (PHP 8.3+, phpseclib v3, ext-sodium) and has an optional
-Laravel service provider. Proofr uses it to connect VPSes as CI runners. It
-holds no app logic (no models, queues or UI), so other apps can reuse it.
+Connect to Linux servers over SSH from PHP without the usual sharp edges:
+a VPS at any provider, a VM you run yourself, or any other Linux box you can
+reach on SSH. It is framework-light (PHP 8.3+, phpseclib v3, ext-sodium) and
+has an optional Laravel service provider. It holds no app logic (no models,
+queues or UI).
 
-The hardening follows DeployDesk's Rust server layer (`ssh.rs`, `keysetup.rs`,
-`facts.rs`, `monitor.rs`, `shim.rs`, `recipes.rs`) and deplr's host key and
-key readers.
+Used by [Proofr](https://github.com/kongpda/proofr) (connects VPSes as CI
+runners) and [Deplr](https://github.com/kongpda/deplr). The hardening follows
+DeployDesk's Rust server layer (`ssh.rs`, `keysetup.rs`, `facts.rs`,
+`monitor.rs`, `shim.rs`, `recipes.rs`) and Deplr's host key and key readers.
+
+## Install
+
+The package is private, so add its repository before requiring it:
+
+```sh
+composer config repositories.server-connect vcs https://github.com/kongpda/server-connect
+composer require kongpda/server-connect:^0.2
+```
+
+## Where it connects
+
+Anything that runs sshd and that the machine running your app can reach:
+
+| Target | How |
+| --- | --- |
+| A VPS or cloud VM (Hetzner, DigitalOcean, AWS, Vultr…) | Its public IP or DNS name. |
+| A VM on your own network (Proxmox, ESXi, a home lab) | Its LAN address (10/8, 172.16/12, 192.168/16). Private ranges are allowed. |
+| A VM on your own machine (Multipass, UTM, VirtualBox, Parallels, VMware, Lima) | Its host-only or bridged address, usually 192.168.x.x, when the app runs on the same machine. A VM that is only reachable through a port forward on `127.0.0.1` needs `allowLocal` (see below). |
+| A machine behind NAT, reached from an app in the cloud | Put both on a tailnet (Tailscale or Headscale, 100.64/10, allowed) or a WireGuard network, and connect to that address. If the app has a pull-mode agent (Proofr's runner), its one-line installer needs no inbound SSH at all. |
+
+What is always refused: link-local addresses (169.254/16, where cloud
+metadata lives), multicast and unspecified addresses, and, unless you allow
+local targets, loopback and the app's own addresses. `allowLocal` (Laravel:
+`SERVER_CONNECT_ALLOW_LOCAL=true`) is for development or a single-box install;
+don't turn it on for a multi-user app, since it lets users point SSH at the
+app's own machine.
+
+`Facts\Probe` tells you what kind of machine you reached: `provider` names the
+cloud, or the hypervisor of a VM you run yourself (`qemu`, `virtualbox`,
+`vmware`, `parallels`), and `virtualization` is `systemd-detect-virt`'s answer
+(`none` on bare metal, `kvm`, `lxc`, `docker`…), with `isVirtualMachine()` and
+`isContainer()` helpers. In a container, Docker, swap and firewall recipes
+usually need the host's help, so check `isContainer()` before offering them.
 
 ## What it does
 
@@ -20,7 +56,7 @@ key readers.
 | `Credentials` | A key, or a password used once. Both are hidden from `var_dump` and refuse to serialize, so they can't leak into a queue payload. |
 | `Connector` / `Session` | The interface, implemented by `Phpseclib\PhpseclibConnector`. Connect times out after 8 s and keepalive runs every 5 s. `run()` has a wall-clock timeout, writes stdin and then EOF, merges stderr into the output, returns the exit code, and can stream output to a callback. |
 | `KeyInstaller` | Logs in with a password once and installs a public key using a fixed script that reads the key from **stdin**. The script sets `umask 077` and `~/.ssh` 0700 / `authorized_keys` 0600, repairs a missing final newline, adds the key only once, runs `restorecon` and prints an OK marker. It then proves that logging in with the key works. |
-| `Facts\Probe` | One read-only round trip delimited by markers. It collects OS, arch, CPU, memory, disk, load, uptime, root/sudo, systemd, curl, package manager, Docker (version, active, access), reboot-required, ufw, fail2ban, unattended-upgrades, swap, sshd settings, the dpkg lock and the cloud provider (from DMI `sys_vendor`). You can add read-only sections of your own. |
+| `Facts\Probe` | One read-only round trip delimited by markers. It collects OS, arch, CPU, memory, disk, load, uptime, root/sudo, systemd, curl, package manager, Docker (version, active, access), reboot-required, ufw, fail2ban, unattended-upgrades, swap, sshd settings, the dpkg lock, the cloud provider or local hypervisor (from DMI `sys_vendor` and `product_name`) and the virtualization type (`systemd-detect-virt`). You can add read-only sections of your own. |
 | `Monitor\MetricsProbe` | Agentless metrics: CPU % from two `/proc/stat` samples, plus memory, disk, load and uptime. |
 | `Shell\Shims` | The prelude every script gets. `$SUDO` is empty for root and `sudo -n` otherwise, so it never hangs on a prompt. `$DOCKER` falls back to `sudo -n docker`. `$APT` is non-interactive, keeps existing config files and waits for the dpkg lock. `sc_wait_dpkg` waits for first-boot updates to finish. |
 | `Recipes` | A closed set of server-prep scripts, invoked by **id only**. They take declared, pattern-checked params and have a safety level (`read_only`, `mutating`, `high_risk`). Ids: `essentials`, `docker`, `swap`, `ufw` (always allows the SSH port in use), `fail2ban`, `unattended-upgrades`, `harden-ssh`, `apt-upgrade` and `reboot`. `prepareSequence()` gives the order for a "Prepare server" stepper. |
@@ -71,7 +107,14 @@ one of your own. Publish the config with
 ## Tests
 
 ```sh
-vendor/bin/pest                  # unit tests (FakeConnector, sh -n on every script)
-scripts/test-ssh                 # (Proofr repo) the integration tests against a real sshd in Docker
+composer test                    # unit tests (FakeConnector, sh -n on every script)
+composer lint                    # pint
+composer analyse                 # phpstan, level 7
+scripts/test-ssh                 # the integration tests against a real sshd in Docker
 SERVER_CONNECT_SSHD=127.0.0.1:2222 SERVER_CONNECT_SSHD_PASSWORD=… vendor/bin/pest tests/Integration
 ```
+
+## Releasing
+
+Tag `vX.Y.Z` on `main`; Composer reads versions from tags. Apps pick up a new
+version with `composer update kongpda/server-connect`.

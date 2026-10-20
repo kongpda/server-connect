@@ -3,14 +3,16 @@
     "description": "Connect to Linux servers over SSH safely: pinned host keys, passphrase-aware keys, one-time password key setup, read-only facts and a closed set of setup recipes. Framework-light, with an optional Laravel service provider.",
     "type": "library",
     "license": "MIT",
-    "version": "0.1.0",
     "require": {
         "php": "^8.3",
         "ext-sodium": "*",
         "phpseclib/phpseclib": "^3.0.36"
     },
     "require-dev": {
-        "pestphp/pest": "^4.0"
+        "illuminate/support": "^12.0|^13.0",
+        "laravel/pint": "^1.24",
+        "pestphp/pest": "^4.0",
+        "phpstan/phpstan": "^2.1"
     },
     "suggest": {
         "illuminate/support": "For the optional Laravel service provider (Kongpda\\ServerConnect\\Laravel\\ServerConnectServiceProvider)."
@@ -25,6 +27,9 @@
             "providers": [
                 "Kongpda\\ServerConnect\\Laravel\\ServerConnectServiceProvider"
             ]
+        },
+        "branch-alias": {
+            "dev-main": "0.2.x-dev"
         }
     },
     "config": {
@@ -33,5 +38,11 @@
             "pestphp/pest-plugin": true
         }
     },
-    "minimum-stability": "stable"
+    "minimum-stability": "stable",
+    "homepage": "https://github.com/kongpda/server-connect",
+    "scripts": {
+        "test": "pest",
+        "lint": "pint --test",
+        "analyse": "phpstan analyse --memory-limit=1G --no-progress"
+    }
 }

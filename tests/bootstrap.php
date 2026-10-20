@@ -1,14 +1,12 @@
 <?php
 
 /*
-| Standalone: `composer install && vendor/bin/pest`. Inside the Proofr monorepo
-| the package can also run on the app's vendor directory:
-| `apps/control-plane/vendor/bin/pest --configuration packages/server-connect/phpunit.xml`.
+| `composer install && vendor/bin/pest`. scripts/test-ssh also runs the
+| integration tests against a real sshd.
 */
 
 $autoloaders = [
     __DIR__.'/../vendor/autoload.php',
-    __DIR__.'/../../../apps/control-plane/vendor/autoload.php',
 ];
 
 foreach ($autoloaders as $autoloader) {

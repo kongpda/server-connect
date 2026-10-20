@@ -1,0 +1,8 @@
+parameters:
+    paths:
+        - src/
+
+    level: 7
+
+    stubFiles:
+        - phpstan/phpseclib.stub

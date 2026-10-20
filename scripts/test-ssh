@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# The integration tests against a real OpenSSH server: host key scan and
+# pinning, password -> key install, passphrase-protected Ed25519 and RSA keys,
+# stdin, exit codes, streaming and timeouts.
+#
+# Starts a throwaway sshd in Docker on 127.0.0.1 with a password user and
+# removes it afterwards.
+#
+# Usage: scripts/test-ssh    (needs Docker and `composer install`)
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+name="server-connect-sshd-$$"
+port="${SSHD_PORT:-22$((RANDOM % 90 + 10))}"
+password="pw-$RANDOM-$RANDOM"
+
+step() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
+cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+step "starting sshd on 127.0.0.1:$port"
+# alpine/git ships OpenSSH's sshd and ssh-keygen.
+docker run -d --rm --name "$name" -p "127.0.0.1:$port:22" -e "PW=$password" --entrypoint sh alpine/git -c \
+    'ssh-keygen -A >/dev/null && adduser -D -s /bin/sh tester && echo "tester:$PW" | chpasswd >/dev/null && exec /usr/sbin/sshd -D -e -o PasswordAuthentication=yes -o PermitRootLogin=no' >/dev/null
+# docker-proxy accepts connections before sshd listens: wait for sshd's own log line.
+for _ in $(seq 1 100); do
+    docker logs "$name" 2>&1 | grep -q 'Server listening' && break
+    sleep 0.2
+done
+fingerprint="$(docker exec "$name" ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub | awk '{print $2}')"
+echo "host key $fingerprint"
+
+export SERVER_CONNECT_SSHD="127.0.0.1:$port" SERVER_CONNECT_SSHD_USER=tester SERVER_CONNECT_SSHD_PASSWORD="$password" SERVER_CONNECT_SSHD_FINGERPRINT="$fingerprint"
+
+step "integration tests"
+(cd "$root" && vendor/bin/pest tests/Integration)
+
+step "ssh tests passed"
