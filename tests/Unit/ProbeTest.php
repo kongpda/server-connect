@@ -35,6 +35,10 @@ SwapTotal:       2097148 kB
 86400.55 300000.00
 @@VENDOR@@
 Hetzner
+@@PRODUCT@@
+vServer
+@@VIRT@@
+kvm
 @@ID@@
 1000
 @@SUDO@@
@@ -78,7 +82,8 @@ test('parses one probe into facts', function () {
     expect($facts->isLinux())->toBeTrue()
         ->and($facts->normalizedArch())->toBe('x86_64')
         ->and($facts->osId)->toBe('ubuntu')->and($facts->osVersion)->toBe('24.04')->and($facts->isDebianLike())->toBeTrue()
-        ->and($facts->provider)->toBe(Provider::Hetzner)
+        ->and($facts->provider)->toBe(Provider::Hetzner)->and($facts->provider->isCloud())->toBeTrue()
+        ->and($facts->virtualization)->toBe('kvm')->and($facts->isVirtualMachine())->toBeTrue()->and($facts->isContainer())->toBeFalse()
         ->and($facts->cpuCount)->toBe(4)
         ->and($facts->memoryTotalMb)->toBe(7852)->and($facts->memoryAvailableMb)->toBe(6000)->and($facts->swapTotalMb)->toBe(2047)
         ->and($facts->diskTotalGb)->toBe(157.4)->and($facts->diskFreeGb)->toBe(114.4)
@@ -89,7 +94,7 @@ test('parses one probe into facts', function () {
         ->and($facts->swapPresent)->toBeTrue()
         ->and($facts->sshdPasswordAuth)->toBeFalse()->and($facts->sshdRootLogin)->toBe('prohibit-password')
         ->and($facts->extra)->toBe(['RUNNER' => 'proofr-runner 0.2.0'])
-        ->and($facts->toArray())->toHaveKeys(['os_name', 'provider', 'docker_access']);
+        ->and($facts->toArray())->toHaveKeys(['os_name', 'provider', 'virtualization', 'docker_access']);
 });
 
 test('a missing section is unknown, not zero', function () {
@@ -97,7 +102,8 @@ test('a missing section is unknown, not zero', function () {
 
     expect($facts->normalizedArch())->toBe('aarch64')
         ->and($facts->memoryTotalMb)->toBeNull()->and($facts->diskFreeGb)->toBeNull()->and($facts->cpuCount)->toBeNull()
-        ->and($facts->sudo)->toBe('no')->and($facts->provider)->toBe(Provider::Unknown);
+        ->and($facts->sudo)->toBe('no')->and($facts->provider)->toBe(Provider::Unknown)
+        ->and($facts->virtualization)->toBeNull()->and($facts->isVirtualMachine())->toBeNull();
 });
 
 test('output without probe markers is an error with the server\'s message', function () {
@@ -126,4 +132,31 @@ test('metrics come from two /proc/stat samples', function () {
         ->and($metrics->load1)->toBe(1.5)->and($metrics->uptimeSeconds)->toBe(100);
     expect(MetricsProbe::parse('')->cpuPercent)->toBeNull()
         ->and(shellSyntaxOk(MetricsProbe::script()))->toBeTrue();
+});
+
+test('the provider names clouds and the hypervisors of your own VMs', function (string $vendor, string $product, Provider $provider, bool $cloud) {
+    expect(Provider::fromDmi($vendor, $product))->toBe($provider)
+        ->and($provider->isCloud())->toBe($cloud);
+})->with([
+    'hetzner' => ['Hetzner', 'vServer', Provider::Hetzner, true],
+    'digitalocean' => ['DigitalOcean', 'Droplet', Provider::DigitalOcean, true],
+    'oracle cloud' => ['OracleCloud.com', 'BM.Standard', Provider::Oracle, true],
+    'proxmox, libvirt, multipass, utm' => ['QEMU', 'Standard PC (Q35 + ICH9, 2009)', Provider::Qemu, false],
+    'virtualbox (innotek)' => ['innotek GmbH', 'VirtualBox', Provider::VirtualBox, false],
+    'virtualbox (oracle vendor)' => ['Oracle Corporation', 'VirtualBox', Provider::VirtualBox, false],
+    'vmware' => ['VMware, Inc.', 'VMware Virtual Platform', Provider::Vmware, false],
+    'parallels' => ['Parallels International GmbH.', 'Parallels ARM Virtual Machine', Provider::Parallels, false],
+    'bare metal' => ['Dell Inc.', 'PowerEdge R650', Provider::Unknown, false],
+]);
+
+test('a local VM and a container are told apart', function () {
+    $vm = Probe::parse("@@UNAME@@\nLinux\nx86_64\n@@VENDOR@@\nQEMU\n@@VIRT@@\nqemu\n@@END@@\n");
+    $lxc = Probe::parse("@@UNAME@@\nLinux\nx86_64\n@@VIRT@@\nlxc\n@@END@@\n");
+    $metal = Probe::parse("@@UNAME@@\nLinux\nx86_64\n@@VIRT@@\nnone\n@@END@@\n");
+    $junk = Probe::parse("@@UNAME@@\nLinux\nx86_64\n@@VIRT@@\n\$(reboot)\n@@END@@\n");
+
+    expect($vm->provider)->toBe(Provider::Qemu)->and($vm->isVirtualMachine())->toBeTrue()
+        ->and($lxc->isContainer())->toBeTrue()->and($lxc->isVirtualMachine())->toBeFalse()
+        ->and($metal->isVirtualMachine())->toBeFalse()->and($metal->isContainer())->toBeFalse()
+        ->and($junk->virtualization)->toBeNull();
 });

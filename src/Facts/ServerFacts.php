@@ -51,6 +51,13 @@ final readonly class ServerFacts
         public ?string $sshdRootLogin,
         public bool $dpkgLocked,
         public array $extra = [],
+        /**
+         * systemd-detect-virt's answer: "none" on bare metal, a hypervisor
+         * ("kvm", "qemu", "oracle" for VirtualBox, "vmware", "microsoft",
+         * "parallels", "apple", "xen") or a container ("lxc", "docker",
+         * "podman", "wsl"…). Null when the server has no systemd-detect-virt.
+         */
+        public ?string $virtualization = null,
     ) {}
 
     public function isLinux(): bool
@@ -68,6 +75,27 @@ final readonly class ServerFacts
             'aarch64', 'arm64' => 'aarch64',
             default => null,
         };
+    }
+
+    /**
+     * A hypervisor guest: a cloud VPS or a VM of your own. Null when unknown.
+     */
+    public function isVirtualMachine(): ?bool
+    {
+        return match ($this->virtualization) {
+            null => null,
+            'none' => false,
+            default => ! $this->isContainer(),
+        };
+    }
+
+    /**
+     * A container (LXC, Docker, Podman, systemd-nspawn, WSL, OpenVZ). Docker,
+     * swap and firewall changes there usually need the host's help.
+     */
+    public function isContainer(): bool
+    {
+        return in_array($this->virtualization, ['lxc', 'lxc-libvirt', 'docker', 'podman', 'systemd-nspawn', 'rkt', 'wsl', 'openvz', 'proot', 'pouch', 'container-other'], true);
     }
 
     public function canBecomeRoot(): bool
@@ -94,6 +122,7 @@ final readonly class ServerFacts
             'os_version' => $this->osVersion,
             'os_name' => $this->osName,
             'provider' => $this->provider->value,
+            'virtualization' => $this->virtualization,
             'cpu_count' => $this->cpuCount,
             'memory_total_mb' => $this->memoryTotalMb,
             'memory_available_mb' => $this->memoryAvailableMb,

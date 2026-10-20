@@ -27,6 +27,8 @@ echo @@DISK@@; df -Pk / 2>/dev/null | awk 'NR==2 {print $2, $4}'
 echo @@LOAD@@; cat /proc/loadavg 2>/dev/null
 echo @@UPTIME@@; cat /proc/uptime 2>/dev/null
 echo @@VENDOR@@; cat /sys/class/dmi/id/sys_vendor 2>/dev/null
+echo @@PRODUCT@@; cat /sys/class/dmi/id/product_name 2>/dev/null
+echo @@VIRT@@; V=$(systemd-detect-virt 2>/dev/null); echo "${V:-unknown}"
 echo @@ID@@; id -u 2>/dev/null
 echo @@SUDO@@; if [ "$(id -u)" -eq 0 ]; then echo root; elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then echo yes; else echo no; fi
 echo @@SYSTEMD@@; [ -d /run/systemd/system ] && echo yes || echo no
@@ -118,7 +120,7 @@ SH;
             osVersion: $os['VERSION_ID'] ?? null,
             osName: $os['PRETTY_NAME'] ?? null,
             osLike: isset($os['ID_LIKE']) ? strtolower($os['ID_LIKE']) : null,
-            provider: Provider::fromVendor($sections['VENDOR'] ?? ''),
+            provider: Provider::fromDmi($sections['VENDOR'] ?? '', $sections['PRODUCT'] ?? ''),
             cpuCount: ctype_digit($first('NPROC')) ? (int) $first('NPROC') : null,
             memoryTotalMb: $kb('MemTotal'),
             memoryAvailableMb: $kb('MemAvailable'),
@@ -147,6 +149,7 @@ SH;
             sshdRootLogin: preg_match('/^permitrootlogin (\S+)/m', $sshd, $m) === 1 ? $m[1] : null,
             dpkgLocked: $first('DPKG') === 'locked',
             extra: $extra,
+            virtualization: preg_match('/^[a-z0-9_-]{1,32}$/', $first('VIRT')) === 1 && $first('VIRT') !== 'unknown' ? $first('VIRT') : null,
         );
     }
 
