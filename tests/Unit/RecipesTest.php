@@ -51,6 +51,8 @@ test('params are validated and quoted, and unknown ones never reach the shell', 
 
     expect(fn () => $swap?->script(22, ['SWAP_SIZE' => "4096'; reboot; '"]))->toThrow(InvalidRecipeParam::class)
         ->and(fn () => Recipes::find('ufw')?->script(22, ['EXTRA_PORTS' => 'from any']))->toThrow(InvalidRecipeParam::class);
+    // sh reads a leading zero as octal, and $((0999+512)) aborts the script.
+    expect(fn () => $swap?->script(22, ['SWAP_SIZE' => '0999']))->toThrow(InvalidRecipeParam::class);
     expect(Recipes::find('ufw')?->script(22, ['EXTRA_PORTS' => '443 6000:6010/tcp']))->toContain("EXTRA_PORTS='443 6000:6010/tcp'");
 });
 

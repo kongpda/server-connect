@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Runs the recipe scripts for real in a throwaway Debian container: the
+# firewall keeps SSH open, and harden-ssh refuses to lock out a user with no key.
+# No sshd is started; the scripts run through `docker exec`.
+#
+# Usage: scripts/test-recipes    (needs Docker and `composer install`)
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+name="server-connect-recipes-$$"
+
+step() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
+cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+step "starting debian:12"
+# ufw needs NET_ADMIN/NET_RAW to manage the container's own iptables.
+docker run -d --rm --name "$name" --cap-add NET_ADMIN --cap-add NET_RAW debian:12 sleep infinity >/dev/null
+docker exec "$name" sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server ufw sudo >/dev/null && mkdir -p /run/sshd && useradd -m -s /bin/sh tester && echo "tester ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/tester'
+
+step "running the recipe tests"
+cd "$root"
+SERVER_CONNECT_RECIPES_CONTAINER="$name" vendor/bin/pest tests/Integration/RecipesContainerTest.php
+
+step "recipe tests passed"

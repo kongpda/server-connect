@@ -29,3 +29,5 @@ jobs:
       - run: composer test
       - name: Integration tests against a real sshd
         run: scripts/test-ssh
+      - name: Recipe tests in a Debian container
+        run: scripts/test-recipes

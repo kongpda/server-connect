@@ -23,6 +23,22 @@
 - `Target` accepted a host with a trailing newline, and strings like
   `1.2.3.4:22` or `[example.com]`. It now accepts only an IP address, a
   bracketed IPv6 address or a host name.
+- The `ufw` recipe set `default deny incoming` before allowing SSH, and
+  allowed only the ports `sshd -T` reports. It now allows SSH first, including
+  the port this connection reached on the server (`$SSH_CONNECTION`), which
+  differs from sshd_config under socket activation. `fail2ban` watches the
+  same ports.
+- `harden-ssh` turned off passwords even when the login user had no SSH key,
+  locking them out. It now refuses until a key is in one of their authorized
+  keys files (unless `AuthorizedKeysCommand` is set).
+- The `swap` recipe accepted sizes like `0999`, which sh reads as octal and
+  aborts on. A resize that failed left the server with no swap; it now puts
+  the old size back.
+
+### Added
+
+- `scripts/test-recipes` runs the firewall and SSH hardening recipes in a
+  Debian container (also in CI).
 
 ## 0.3.0
 
