@@ -85,6 +85,12 @@ test('a command that reads stdin cannot swallow the rest of the script', functio
 });
 
 test('apt recipes stop with a clear message on servers without apt-get', function (string $id) {
+    // The prelude adds the sbin directories to PATH, so an installed ufw there is found and
+    // the script never needs apt-get (the case on CI runners).
+    if ($id === 'ufw' && array_filter(['/usr/local/sbin/ufw', '/usr/sbin/ufw', '/sbin/ufw'], is_executable(...)) !== []) {
+        $this->markTestSkipped('ufw is installed on this machine, in a directory the prelude adds to PATH.');
+    }
+
     $output = runScriptWithoutCommands((string) Recipes::find($id)?->script(22));
 
     expect($output)->toContain('apt-get');
