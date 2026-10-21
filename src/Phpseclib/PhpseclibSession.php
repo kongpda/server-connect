@@ -116,7 +116,7 @@ final class PhpseclibSession implements Session
         } catch (SshException $exception) {
             throw $exception;
         } catch (Throwable $exception) {
-            throw new SshException("The connection to {$this->where} dropped: ".mb_substr($exception->getMessage(), 0, 200), SshException::DROPPED);
+            throw new SshException("The connection to {$this->where} dropped: ".mb_substr((string) preg_replace('/[\x00-\x1f\x7f]/', '', $exception->getMessage()), 0, 200), SshException::DROPPED);
         } finally {
             $this->ssh->setHardDeadline(null);
         }

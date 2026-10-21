@@ -3,6 +3,7 @@
 use Kongpda\ServerConnect\HostKey;
 use Kongpda\ServerConnect\InvalidPrivateKey;
 use Kongpda\ServerConnect\PrivateKey;
+use phpseclib3\Crypt\EC;
 
 test('passphrase-protected OpenSSH keys need the right passphrase', function (string $file) {
     $text = keyFixture($file);
@@ -110,4 +111,21 @@ test('refuses PuTTY keys, whose Argon2 cost comes from the key text', function (
     expect(fn () => PrivateKey::load($text, 'x'))->toThrow(fn (InvalidPrivateKey $e) => expect($e->reason)->toBe(InvalidPrivateKey::UNSUPPORTED))
         ->and(microtime(true) - $started)->toBeLessThan(0.5)
         ->and(fn () => PrivateKey::load("junk\n".keyFixture('ed25519_plain')))->toThrow(InvalidPrivateKey::class);
+});
+
+test('keeps the comment of a passphrase-protected OpenSSH key', function () {
+    // The comment sits inside the encrypted part, so it is only readable once decrypted.
+    expect(PrivateKey::load(keyFixture('ed25519_passphrase'), 'correct horse')->comment())->toBe('fixture-ed25519');
+});
+
+test('a key on a curve OpenSSH has no name for is refused as unsupported, not a phpseclib error', function () {
+    $pem = EC::createKey('secp256k1')->toString('PKCS8');
+
+    expect(fn () => PrivateKey::load($pem))->toThrow(fn (InvalidPrivateKey $e) => expect($e->reason)->toBe(InvalidPrivateKey::UNSUPPORTED));
+});
+
+test('at most 32 bcrypt rounds, about 16 seconds of a worker', function () {
+    expect(PrivateKey::MAX_KDF_ROUNDS)->toBe(32)
+        ->and(fn () => PrivateKey::load(withKdfRounds(keyFixture('ed25519_passphrase'), 33), 'correct horse'))
+        ->toThrow(InvalidPrivateKey::class, 'at most 32');
 });

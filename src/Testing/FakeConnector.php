@@ -99,14 +99,24 @@ final class FakeConnector implements Connector
 
         return new class($server) implements Session
         {
+            private bool $closed = false;
+
             public function __construct(private readonly FakeConnector $server) {}
 
             public function run(string $command, string $stdin = '', ?Closure $onOutput = null, int $timeoutSeconds = 60): CommandResult
             {
+                // Like a real session, so code that runs after disconnect() fails in tests too.
+                if ($this->closed) {
+                    throw new SshException('The connection was already closed.', SshException::DROPPED);
+                }
+
                 return $this->server->answer($command, $stdin, $onOutput);
             }
 
-            public function disconnect(): void {}
+            public function disconnect(): void
+            {
+                $this->closed = true;
+            }
         };
     }
 

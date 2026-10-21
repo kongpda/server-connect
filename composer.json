@@ -6,7 +6,7 @@
     "require": {
         "php": "^8.3",
         "ext-sodium": "*",
-        "phpseclib/phpseclib": "^3.0.36"
+        "phpseclib/phpseclib": "^3.0.57"
     },
     "require-dev": {
         "illuminate/support": "^12.0|^13.0",
@@ -30,7 +30,7 @@
             ]
         },
         "branch-alias": {
-            "dev-main": "0.4.x-dev"
+            "dev-main": "0.5.x-dev"
         }
     },
     "config": {

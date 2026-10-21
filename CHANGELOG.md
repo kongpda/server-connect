@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.5.0
+
+Fixes from a third review: probe answers that could be wrong or carry
+hostile text, recipes that could fail half way or leave a server worse off,
+and a phpseclib floor that still allowed versions with known CVEs. Check the
+"Changed" list before upgrading.
+
+### Changed
+
+- `KeyInstaller` failures after the password was accepted (a bad key line,
+  the install script failing, the key not working afterwards) now have the
+  new reason `install_failed` instead of `authentication`, so a UI doesn't
+  ask for the password again. An empty password is still `authentication`.
+- `MetricsProbe::run()` throws `SshException` (`dropped`) when the output was
+  truncated or has no `@@END@@` marker, instead of returning partial metrics.
+- `PrivateKey::MAX_KDF_ROUNDS` is 32 (was 64): 64 rounds held a worker for
+  about half a minute.
+- `Target` login names are ASCII letters, digits and `. _ - @`, at most 64
+  characters, not starting with `-`. Quotes, `$`, backticks, non-ASCII and
+  bidi characters are refused.
+- phpseclib floor is `^3.0.57` (was `^3.0.36`), which excludes
+  CVE-2026-32935, CVE-2026-40194, CVE-2026-44167 and CVE-2026-84308.
+- `Provider::fromVendor()` is deprecated; use `fromDmi()`.
+- `FakeConnector` sessions throw `SshException` (`dropped`) when used after
+  `disconnect()`, like a real connection.
+- `harden-ssh` rolls back its change and fails when sshd can't be reloaded.
+
+### Fixed
+
+- Probe: reboot-required now also reports a newer installed kernel than the
+  running one; ufw state is read from `ufw.conf`, so it works without root;
+  a commented-out `Unattended-Upgrade "1"` no longer counts as enabled.
+- Probe: OS, kernel and arch strings are stripped of control characters and
+  capped; the package manager, Docker version and `PermitRootLogin` value are
+  checked against known forms.
+- `Probe::script()` refuses a list of snippets (int keys) with a clear error.
+- `PrivateKey::load()` keeps the comment of a passphrase-protected OpenSSH
+  key, and refuses keys on curves with no OpenSSH form (secp256k1…) as
+  `unsupported` instead of throwing a phpseclib error.
+- Server text in connect and dropped-connection messages is stripped of
+  control characters.
+- `TargetGuard` resolves `$ownHosts` once per instance instead of on every
+  `resolve()`.
+- The script prelude adds `/usr/local/sbin:/usr/sbin:/sbin` to `PATH`, so
+  recipes find `sshd`, `ufw` and `swapon` when logged in as a non-root user.
+- `swap`: an existing swap file of the right size is added to `/etc/fstab`
+  if missing, so it survives a reboot.
+- `ufw`: fails when `ufw enable` fails, and warns that ports published by
+  Docker bypass UFW (use the `DOCKER-USER` chain).
+- `harden-ssh`: checks for root or passwordless sudo before changing
+  anything; reads `AuthorizedKeysFile` from `sshd -T`; ignores commented-out
+  keys; keeps a backup and restores it if the check or the reload fails;
+  reloads sshd on systemd and non-systemd hosts.
+- `apt-upgrade` installs upgrades that need new packages (new kernels) and
+  detects a pending reboot from the kernel too.
+- `reboot` waits for the dpkg lock and refuses while apt or dpkg is running.
+
+### Not changed
+
+- The `min_rsa_bits` config floor stays at 1024, matching OpenSSH's default
+  `RequiredRSASize`. The default is still 2048; lowering it is an explicit
+  opt-in.
+
+### Documented
+
+- The `SshException` reasons, including `install_failed`, and `timeout`
+  (a command's own limit) versus `unreachable` (connect and handshake).
+- Probe `extra` output is raw server text; escape it before showing it.
+- `TargetGuard`: list the origin's own IP when the app sits behind a CDN.
+- `scripts/test-recipes` in the Tests section.
+
 ## 0.4.0
 
 Fixes from a second review: work limits phpseclib left open, recipes that

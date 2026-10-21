@@ -105,3 +105,37 @@ test('the check after installing must reach the same server, even on first use',
     expect($pinned)->toHaveCount(1)
         ->and($this->server->connections)->toHaveCount(1);
 });
+
+test('a failed install is not reported as refused credentials', function () {
+    // The password worked; an app that asks for it again on AUTHENTICATION would send the user in circles.
+    $installer = new KeyInstaller($this->server);
+    $reason = function (Closure $install): string {
+        try {
+            $install();
+        } catch (SshException $e) {
+            return $e->reason;
+        }
+
+        return 'none';
+    };
+
+    expect($reason(fn () => $installer->install($this->target, '203.0.113.10', 'nope', $this->key, $this->trust)))->toBe(SshException::AUTHENTICATION)
+        ->and($reason(fn () => $installer->install($this->target, '203.0.113.10', '', $this->key, $this->trust)))->toBe(SshException::AUTHENTICATION);
+
+    $this->server->on(KeyInstaller::MARKER, ["touch: Permission denied\n", 1]);
+    expect($reason(fn () => $installer->install($this->target, '203.0.113.10', 'hunter2', $this->key, $this->trust)))->toBe(SshException::INSTALL_FAILED);
+
+    $this->server->on(KeyInstaller::MARKER, ["SC_KEY_OK\n", 0]);
+    expect($reason(fn () => $installer->install($this->target, '203.0.113.10', 'hunter2', $this->key, $this->trust)))->toBe(SshException::INSTALL_FAILED);
+
+    $this->server->authorizedKeys = null;
+    $this->server->on('server-connect:verify-key', ["This account is currently not available.\n", 1]);
+    expect($reason(fn () => $installer->install($this->target, '203.0.113.10', 'hunter2', $this->key, $this->trust)))->toBe(SshException::INSTALL_FAILED);
+});
+
+test('the server\'s words in an install error are printable', function () {
+    $this->server->on(KeyInstaller::MARKER, ["mkdir: \x1b]0;pwned\x07failed\n", 1]);
+
+    expect(fn () => (new KeyInstaller($this->server))->install($this->target, '203.0.113.10', 'hunter2', $this->key, $this->trust))
+        ->toThrow(fn (SshException $e) => expect($e->getMessage())->toContain('mkdir: ]0;pwnedfailed')->not->toContain("\x1b")->not->toContain("\x07"));
+});

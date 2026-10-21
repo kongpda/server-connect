@@ -13,6 +13,8 @@ namespace Kongpda\ServerConnect\Shell;
  * - $APT is non-interactive, keeps existing config files and waits up to
  *   5 minutes for the dpkg lock (first-boot updates) instead of failing.
  * - sc_wait_dpkg waits up to 5 minutes for other package jobs to finish.
+ * - PATH includes the sbin directories, which a non-root login often lacks
+ *   (ufw, sshd and service live there).
  */
 final class Shims
 {
@@ -25,11 +27,11 @@ final class Shims
     public const DPKG_WAIT = "sc_wait_dpkg(){ n=0; while { pgrep -x 'apt|apt-get|dpkg|aptitude' >/dev/null 2>&1 || pgrep -f '[b]in/unattended-upgrade( |\$)' >/dev/null 2>&1; } && [ \$n -lt 60 ]; do [ \$n -eq 0 ] && echo 'Waiting for another package job (for example first-boot updates) to finish…'; n=\$((n+1)); sleep 5; done; }\n";
 
     /**
-     * Every shim, in dependency order ($APT uses $SUDO).
+     * Every shim, in dependency order ($APT uses $SUDO), after the PATH fix.
      */
     public static function prelude(): string
     {
-        return self::SUDO.self::DOCKER_READ.self::APT.self::DPKG_WAIT;
+        return "PATH=\"\$PATH:/usr/local/sbin:/usr/sbin:/sbin\"; export PATH\n".self::SUDO.self::DOCKER_READ.self::APT.self::DPKG_WAIT;
     }
 
     /**

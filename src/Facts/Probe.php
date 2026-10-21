@@ -37,25 +37,28 @@ echo @@PKG@@; for p in apt-get dnf yum zypper pacman apk; do command -v $p >/dev
 echo @@DOCKER@@; docker --version 2>/dev/null || echo none
 echo @@DOCKERD@@; systemctl is-active docker 2>/dev/null || echo inactive
 echo @@DACCESS@@; if ! command -v docker >/dev/null 2>&1; then echo unknown; elif $DOCKER ps -q >/dev/null 2>&1; then if [ "$DOCKER" = docker ]; then echo ok; else echo sudo; fi; elif systemctl is-active --quiet docker 2>/dev/null; then echo denied; else echo unknown; fi
-echo @@REBOOT@@; test -f /var/run/reboot-required && echo yes || echo no
-echo @@UFW@@; systemctl is-active ufw 2>/dev/null || echo inactive
+echo @@REBOOT@@; K=$(ls -d /boot/vmlinuz-[0-9]* 2>/dev/null | sed 's|^/boot/vmlinuz-||' | sort -V | tail -1); if test -f /var/run/reboot-required || { [ -n "$K" ] && [ "$K" != "$(uname -r)" ]; }; then echo yes; else echo no; fi
+echo @@UFW@@; grep -qsi '^ENABLED=yes' /etc/ufw/ufw.conf && echo active || echo inactive
 echo @@FAIL2BAN@@; systemctl is-active fail2ban 2>/dev/null || echo inactive
-echo @@UNATT@@; grep -hsq 'Unattended-Upgrade "1"' /etc/apt/apt.conf.d/20auto-upgrades && echo configured || echo none
+echo @@UNATT@@; grep -hsqE '^[[:space:]]*APT::Periodic::Unattended-Upgrade[[:space:]]+"1"' /etc/apt/apt.conf.d/20auto-upgrades && echo configured || echo none
 echo @@SWAP@@; awk 'NR>1 {print $1}' /proc/swaps 2>/dev/null | head -1
 echo @@SSHD@@; S=$(command -v sshd 2>/dev/null || echo /usr/sbin/sshd); $SUDO $S -T 2>/dev/null | grep -Ei '^(passwordauthentication|permitrootlogin) '
 echo @@DPKG@@; if pgrep -x 'apt|apt-get|dpkg|aptitude' >/dev/null 2>&1 || pgrep -f '[b]in/unattended-upgrade( |$)' >/dev/null 2>&1; then echo locked; else echo free; fi
 SH;
 
     /**
-     * @param  array<string, string>  $extra  more read-only sections, NAME => shell snippet (NAME is [A-Z0-9_])
+     * @param  array<string, string>  $extra  more read-only sections, NAME => shell snippet (NAME is [A-Z0-9_]).
+     *                                        Their output comes back in ServerFacts::$extra as the server sent it:
+     *                                        escape it before showing it.
      */
     public static function script(array $extra = []): string
     {
         $sections = '';
 
         foreach ($extra as $name => $snippet) {
-            if (preg_match('/^[A-Z][A-Z0-9_]{0,31}$/', $name) !== 1) {
-                throw new InvalidArgumentException("Invalid probe section name \"{$name}\".");
+            // @phpstan-ignore function.alreadyNarrowedType (a list passed by mistake has int keys)
+            if (! is_string($name) || preg_match('/^[A-Z][A-Z0-9_]{0,31}$/', $name) !== 1) {
+                throw new InvalidArgumentException('Invalid probe section name "'.$name.'"; use NAME => snippet.');
             }
 
             $sections .= "echo @@X_{$name}@@; {$snippet}\n";
@@ -126,12 +129,12 @@ SH;
         }
 
         return new ServerFacts(
-            kernel: $uname[0] ?? 'unknown',
-            arch: $uname[1] ?? null,
-            osId: isset($os['ID']) ? strtolower($os['ID']) : null,
-            osVersion: $os['VERSION_ID'] ?? null,
-            osName: $os['PRETTY_NAME'] ?? null,
-            osLike: isset($os['ID_LIKE']) ? strtolower($os['ID_LIKE']) : null,
+            kernel: self::text($uname[0] ?? null) ?? 'unknown',
+            arch: self::text($uname[1] ?? null),
+            osId: self::text(isset($os['ID']) ? strtolower($os['ID']) : null),
+            osVersion: self::text($os['VERSION_ID'] ?? null),
+            osName: self::text($os['PRETTY_NAME'] ?? null),
+            osLike: self::text(isset($os['ID_LIKE']) ? strtolower($os['ID_LIKE']) : null),
             provider: Provider::fromDmi($sections['VENDOR'] ?? '', $sections['PRODUCT'] ?? ''),
             cpuCount: ctype_digit($first('NPROC')) ? (int) $first('NPROC') : null,
             memoryTotalMb: $kb('MemTotal'),
@@ -147,9 +150,9 @@ SH;
             sudo: in_array($first('SUDO'), ['root', 'yes'], true) ? $first('SUDO') : 'no',
             systemd: $first('SYSTEMD') === 'yes',
             curl: $first('CURL') === 'yes',
-            packageManager: $first('PKG') !== '' ? $first('PKG') : null,
+            packageManager: in_array($first('PKG'), ['apt-get', 'dnf', 'yum', 'zypper', 'pacman', 'apk'], true) ? $first('PKG') : null,
             dockerInstalled: $docker !== 'none' && $docker !== '',
-            dockerVersion: preg_match('/version ([0-9][^,\s]*)/i', $docker, $m) === 1 ? $m[1] : null,
+            dockerVersion: preg_match('/version ([0-9][0-9A-Za-z.+~-]{0,63})/i', $docker, $m) === 1 ? $m[1] : null,
             dockerActive: $first('DOCKERD') === 'active',
             dockerAccess: in_array($first('DACCESS'), ['ok', 'sudo', 'denied'], true) ? $first('DACCESS') : 'unknown',
             rebootRequired: $first('REBOOT') === 'yes',
@@ -158,7 +161,7 @@ SH;
             unattendedUpgrades: $first('UNATT') === 'configured',
             swapPresent: $first('SWAP') !== '',
             sshdPasswordAuth: preg_match('/^passwordauthentication (yes|no)/m', $sshd, $m) === 1 ? $m[1] === 'yes' : null,
-            sshdRootLogin: preg_match('/^permitrootlogin (\S+)/m', $sshd, $m) === 1 ? $m[1] : null,
+            sshdRootLogin: preg_match('/^permitrootlogin (yes|no|prohibit-password|without-password|forced-commands-only)$/m', $sshd, $m) === 1 ? $m[1] : null,
             dpkgLocked: $first('DPKG') === 'locked',
             extra: $extra,
             virtualization: preg_match('/^[a-z0-9_-]{1,32}$/', $first('VIRT')) === 1 && $first('VIRT') !== 'unknown' ? $first('VIRT') : null,
@@ -218,6 +221,17 @@ SH;
     public static function gigabytes(?string $kilobytes): ?float
     {
         return $kilobytes !== null && preg_match('/^\d{1,15}$/', $kilobytes) === 1 ? round((int) $kilobytes / 1048576, 1) : null;
+    }
+
+    /**
+     * A short, printable string from the server, or null: it may send
+     * anything, and these fields end up in logs and pages.
+     */
+    private static function text(?string $value): ?string
+    {
+        $value = trim(mb_substr((string) preg_replace('/[\x00-\x1f\x7f]/', '', mb_scrub((string) $value)), 0, 100));
+
+        return $value === '' ? null : $value;
     }
 
     /**

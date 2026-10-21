@@ -16,7 +16,7 @@ It isn't on Packagist yet, so add its repository before requiring it:
 
 ```sh
 composer config repositories.server-connect vcs https://github.com/kongpda/server-connect
-composer require kongpda/server-connect:^0.4
+composer require kongpda/server-connect:^0.5
 ```
 
 ## Where it connects
@@ -57,17 +57,17 @@ usually need the host's help, so check `isContainer()` before offering them.
 
 | Piece | What for |
 | --- | --- |
-| `Target` | Validates host, port and user strictly. Rejects a leading `-`, whitespace, control characters and `user@` smuggled into the host, so nothing can be read as an ssh option. |
+| `Target` | Validates host, port and user strictly. Rejects a leading `-`, whitespace, control characters and `user@` smuggled into the host, so nothing can be read as an ssh option. Login names are ASCII letters, digits and `. _ - @`. |
 | `TargetGuard` | Resolves the host once and refuses addresses as described above. Connect to the IP it returns, so DNS can't change between check and connect. Always pass the address it returns to `connect()`, never the host name. |
 | `HostKey`, `HostKeyPolicy`, `HostKeyChanged` | The host key check runs **before** authentication. `HostKeyPolicy::expect($fingerprint)` accepts only a fingerprint the user checked out of band (the safest). `HostKeyPolicy::pinned($fingerprint, $onFirstUse)` pins on first use, then enforces it; the check it returns remembers the first key, so a second connection with it must reach the same server. A mismatch throws `HostKeyChanged` with the presented key and the pinned fingerprint, so a UI can show old vs new. Fingerprints match `ssh-keygen -l` (`SHA256:…`). RSA host keys must be 2048–16384 bits with a normal exponent. |
-| `PrivateKey` | Loads OpenSSH and PEM keys (Ed25519, ECDSA, RSA ≥ 2048), passphrase-protected or not, and generates Ed25519 keys. Errors carry a reason code: `passphrase_required`, `wrong_passphrase` or `unsupported`. `isEncrypted()` works without the passphrase. Passphrase-protected OpenSSH keys may use at most 64 bcrypt rounds, and encrypted PKCS#8 keys are refused, because the key text sets the work factor. Keys never print or serialize; export them on purpose with `toOpenSsh(?passphrase)`. |
+| `PrivateKey` | Loads OpenSSH and PEM keys (Ed25519, ECDSA, RSA ≥ 2048), passphrase-protected or not, and generates Ed25519 keys. Errors carry a reason code: `passphrase_required`, `wrong_passphrase` or `unsupported`. `isEncrypted()` works without the passphrase. Passphrase-protected OpenSSH keys may use at most 32 bcrypt rounds, and encrypted PKCS#8 keys are refused, because the key text sets the work factor. Keys never print or serialize; export them on purpose with `toOpenSsh(?passphrase)`. |
 | `Credentials` | A key, or a password. Both are hidden from `var_dump` and refuse to serialize. |
 | `Connector` / `Session` | The interface, implemented by `Phpseclib\PhpseclibConnector`. The TCP connect and handshake share one 8 s timeout, and keepalive runs every 5 s. Once logged in, the connection forgets the password or key, and the session refuses to serialize. `run()` has a wall-clock timeout that holds even while output keeps coming, writes stdin and then EOF, merges stderr into the output, returns the exit code, and can stream output to a callback. It keeps at most 4 MB of output (`truncated` is set beyond that; the callback still sees all of it). |
 | `KeyInstaller` | Logs in with a password once and installs a public key using a fixed script that reads the key from **stdin**. The script sets `umask 077` and `~/.ssh` 0700 / `authorized_keys` 0600, repairs a missing final newline, adds the key only once, runs `restorecon` and prints an OK marker. It then proves that logging in with the key works. |
 | `Facts\Probe` | One read-only round trip delimited by markers. It collects OS, arch, CPU, memory, disk, load, uptime, root/sudo, systemd, curl, package manager, Docker (version, active, access), reboot-required, ufw, fail2ban, unattended-upgrades, swap, sshd settings, the dpkg lock, the cloud provider or local hypervisor (from DMI `sys_vendor` and `product_name`) and the virtualization type (`systemd-detect-virt`). You can add read-only sections of your own. |
 | `Monitor\MetricsProbe` | Agentless metrics: CPU % from two `/proc/stat` samples, plus memory, disk, load and uptime. |
 | `Shell\Shims` | The prelude every script gets. `$SUDO` is empty for root and `sudo -n` otherwise, so it never hangs on a prompt. `$DOCKER` falls back to `sudo -n docker`. `$APT` is non-interactive, keeps existing config files and waits for the dpkg lock. `sc_wait_dpkg` waits for first-boot updates to finish. |
-| `Recipes` | A closed set of server-prep scripts, invoked by **id only**. They take declared, pattern-checked params and have a safety level (`read_only`, `mutating`, `high_risk`). Ids: `essentials`, `docker`, `swap`, `ufw` (always allows the ports sshd listens on and the one this connection uses), `fail2ban`, `unattended-upgrades`, `harden-ssh` (refuses until the login user has an SSH key), `apt-upgrade` and `reboot`. `prepareSequence()` gives the order for a "Prepare server" stepper. |
+| `Recipes` | A closed set of server-prep scripts, invoked by **id only**. They take declared, pattern-checked params and have a safety level (`read_only`, `mutating`, `high_risk`). Ids: `essentials`, `docker`, `swap`, `ufw` (always allows the ports sshd listens on and the one this connection uses; ports published by Docker containers bypass UFW), `fail2ban`, `unattended-upgrades`, `harden-ssh` (refuses until the login user has an SSH key), `apt-upgrade` and `reboot`. `prepareSequence()` gives the order for a "Prepare server" stepper. |
 | `Testing\FakeConnector` | A scripted SSH server for tests. You set its host key, the keys and passwords it accepts and how it answers each script, matched by the marker comment on the script's first line. Scripts without a handler return exit 0 and no output, so never bind it outside tests. |
 
 ## Use
@@ -94,6 +94,20 @@ $session->disconnect();
 Secrets never go on a remote command line, where `ps` would show them to other
 users. Send them on stdin, as part of a script for `sh -s`. `Probe::script()`
 and recipes run your extra snippets verbatim: never put user input in them.
+The output of your own probe sections comes back in `$facts->extra` exactly as
+the server sent it, so escape it before you show it.
+
+Every `SshException` has a `reason` for your UI to branch on:
+
+| Reason | Meaning |
+| --- | --- |
+| `unreachable` | No connection: DNS, a refused or filtered port, or a handshake that timed out. |
+| `authentication` | The server refused the password or key (or no password was given). Ask for it again. |
+| `install_failed` | `KeyInstaller` logged in with the password, but installing or then using the key failed. Don't ask for the password again; show the message. |
+| `host_key_changed` | Thrown as `HostKeyChanged`, with the presented key and the pinned fingerprint. |
+| `refused_target` | `TargetGuard` refused the address. |
+| `timeout` | A command (a probe, the key install) ran past its own time limit. |
+| `dropped` | The connection closed, or the server's answer was cut off or garbled. |
 
 ## Laravel
 
@@ -166,6 +180,7 @@ composer test                    # unit tests (FakeConnector, sh -n on every scr
 composer lint                    # pint
 composer analyse                 # phpstan, level 7
 scripts/test-ssh                 # the integration tests against a real sshd in Docker
+scripts/test-recipes             # the recipes, run for real in a Debian container
 SERVER_CONNECT_SSHD=127.0.0.1:2222 SERVER_CONNECT_SSHD_PASSWORD=… vendor/bin/pest tests/Integration
 ```
 

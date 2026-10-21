@@ -223,3 +223,104 @@ test('metrics polls run no docker or sudo checks', function () {
     expect(MetricsProbe::script())->not->toContain('docker')->not->toContain('sudo')
         ->and(shellSyntaxOk(MetricsProbe::script()))->toBeTrue();
 });
+
+/**
+ * Run one probe section with its absolute paths pointed at test files.
+ *
+ * @param  array<string, string>  $paths
+ */
+function runProbeSection(string $name, array $paths): string
+{
+    preg_match('/^echo @@'.$name.'@@;.*$/m', Probe::script(), $line);
+    $process = proc_open(['sh', '-c', strtr($line[0], $paths)], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    $output = (string) stream_get_contents($pipes[1]);
+    proc_close($process);
+
+    return trim(str_replace("@@{$name}@@", '', $output));
+}
+
+test('ufw counts as active from its own config, which a non-root user can read', function () {
+    // `systemctl is-active ufw` only says the boot unit ran: it is "active" after `ufw disable` too.
+    $conf = tempnam(sys_get_temp_dir(), 'ufw');
+
+    file_put_contents($conf, "# comment\nENABLED=no\n");
+    $disabled = runProbeSection('UFW', ['/etc/ufw/ufw.conf' => $conf]);
+    file_put_contents($conf, "ENABLED=yes\n");
+    $enabled = runProbeSection('UFW', ['/etc/ufw/ufw.conf' => $conf]);
+    unlink($conf);
+
+    expect($disabled)->toBe('inactive')->and($enabled)->toBe('active')
+        ->and(runProbeSection('UFW', ['/etc/ufw/ufw.conf' => '/nonexistent/ufw.conf']))->toBe('inactive');
+});
+
+test('a commented-out unattended-upgrades line does not count as configured', function () {
+    $conf = tempnam(sys_get_temp_dir(), 'apt');
+
+    file_put_contents($conf, "// APT::Periodic::Unattended-Upgrade \"1\";\nAPT::Periodic::Unattended-Upgrade \"0\";\n");
+    $off = runProbeSection('UNATT', ['/etc/apt/apt.conf.d/20auto-upgrades' => $conf]);
+    file_put_contents($conf, "APT::Periodic::Update-Package-Lists \"1\";\n  APT::Periodic::Unattended-Upgrade \"1\";\n");
+    $on = runProbeSection('UNATT', ['/etc/apt/apt.conf.d/20auto-upgrades' => $conf]);
+    unlink($conf);
+
+    expect($off)->toBe('none')->and($on)->toBe('configured');
+});
+
+test('a newer installed kernel than the running one means a reboot is needed', function () {
+    // Debian doesn't write /var/run/reboot-required; a new vmlinuz in /boot is the sign.
+    $boot = sys_get_temp_dir().'/sc-boot-'.getmypid();
+    is_dir($boot) || mkdir($boot);
+    $running = trim((string) shell_exec('uname -r'));
+    touch("{$boot}/vmlinuz-{$running}");
+    $paths = ['/var/run/reboot-required' => '/nonexistent', '/boot/vmlinuz-' => "{$boot}/vmlinuz-", 's|^/boot/vmlinuz-||' => "s|^{$boot}/vmlinuz-||"];
+
+    $current = runProbeSection('REBOOT', $paths);
+    touch("{$boot}/vmlinuz-999.0.0-1-amd64");
+    $newer = runProbeSection('REBOOT', $paths);
+    array_map('unlink', glob("{$boot}/*") ?: []);
+    rmdir($boot);
+
+    expect($current)->toBe('no')->and($newer)->toBe('yes');
+});
+
+test('server strings in facts are short, printable, and known values where a list exists', function () {
+    $facts = Probe::parse("@@OSREL@@\nPRETTY_NAME=\"Evil\x1b[2J ".str_repeat('x', 100_000)."\"\nID=\"deb\x07ian\"\n@@UNAME@@\nLinux\x00\nx86_64\n@@PKG@@\n<img src=x>\n@@DOCKER@@\nDocker version 1.0<script>, build x\n@@SSHD@@\npermitrootlogin <b>yes</b>\n@@END@@\n");
+
+    expect(mb_strlen((string) $facts->osName))->toBeLessThanOrEqual(100)
+        ->and($facts->osName)->not->toContain("\x1b")
+        ->and($facts->osId)->toBe('debian')
+        ->and($facts->kernel)->toBe('Linux')->and($facts->isLinux())->toBeTrue()
+        ->and($facts->packageManager)->toBeNull()
+        ->and($facts->dockerVersion)->toBe('1.0')
+        ->and($facts->sshdRootLogin)->toBeNull();
+});
+
+test('extra sections must be keyed by name, not a plain list', function () {
+    expect(fn () => Probe::script(['echo hi']))->toThrow(InvalidArgumentException::class, 'Invalid probe section name');
+});
+
+test('a metrics answer that is cut off throws instead of reading as all unknown', function (CommandResult $result) {
+    $session = new class($result) implements Session
+    {
+        public function __construct(private CommandResult $result) {}
+
+        public function run(string $command, string $stdin = '', ?Closure $onOutput = null, int $timeoutSeconds = 60): CommandResult
+        {
+            return $this->result;
+        }
+
+        public function disconnect(): void {}
+    };
+
+    expect(fn () => MetricsProbe::run($session))->toThrow(SshException::class, 'metrics probe was cut off');
+})->with([
+    'no end marker' => [new CommandResult(0, "@@STAT1@@\ncpu 1 2 3 4\n")],
+    'truncated' => [new CommandResult(0, "@@STAT1@@\n@@END@@\n", truncated: true)],
+    'not a shell' => [new CommandResult(127, "This account is currently not available.\n")],
+]);
+
+test('a complete metrics answer still parses through run()', function () {
+    $server = (new FakeConnector)->on(MetricsProbe::MARKER, ["@@LOAD@@\n0.5 1 1\n@@END@@\n", 0]);
+    $session = $server->connect(new Target('203.0.113.1', 22, 'root'), '203.0.113.1', Credentials::key(PrivateKey::generateEd25519()), fn () => null);
+
+    expect(MetricsProbe::run($session)->load1)->toBe(0.5);
+});

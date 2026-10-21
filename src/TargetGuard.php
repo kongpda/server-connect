@@ -24,6 +24,10 @@ use Closure;
  *
  * Connect to the address resolve() returns, so a DNS answer that changes
  * between the check and the connection can't slip past it.
+ *
+ * $ownHosts are resolved once per instance, on the first resolve(). A host
+ * behind a CDN or load balancer resolves to the proxy, not the origin
+ * server: list the origin's own IP in $ownHosts too.
  */
 final class TargetGuard
 {
@@ -31,6 +35,11 @@ final class TargetGuard
      * @var Closure(string): list<string>
      */
     private Closure $lookup;
+
+    /**
+     * @var list<string>|null
+     */
+    private ?array $own = null;
 
     /**
      * @param  bool  $allowLocal  allow loopback and $ownHosts (a runner on this very box)
@@ -61,7 +70,7 @@ final class TargetGuard
             throw new SshException("{$host} doesn't resolve to an address. Check the host name, or use the server's IP address.", SshException::UNREACHABLE);
         }
 
-        $own = $this->allowLocal ? [] : $this->ownAddresses();
+        $own = $this->allowLocal ? [] : ($this->own ??= $this->ownAddresses());
 
         foreach ($addresses as $address) {
             $problem = $this->problemWith($address, $own);

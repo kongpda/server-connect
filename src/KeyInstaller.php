@@ -46,7 +46,7 @@ final class KeyInstaller
         }
 
         if (! self::isPublicKeyLine($key->publicLine)) {
-            throw new SshException('The public key is not a plain OpenSSH key line.', SshException::AUTHENTICATION);
+            throw new SshException('The public key is not a plain OpenSSH key line.', SshException::INSTALL_FAILED);
         }
 
         // Whatever the caller's check, the second connection must reach the same server.
@@ -74,8 +74,9 @@ final class KeyInstaller
 
         if (! $result->successful() || ! in_array(self::OK_MARKER, array_map('trim', explode("\n", $result->output)), true)) {
             $first = trim((string) strtok($result->output, "\n"));
+            $first = mb_substr((string) preg_replace('/[\x00-\x1f\x7f]/', '', $first), 0, 200);
 
-            throw new SshException('Installing the key failed'.($first !== '' ? ': '.mb_substr($first, 0, 200) : '.').' Check that the home directory of '.$target->user.' is writable.', SshException::AUTHENTICATION);
+            throw new SshException('Installing the key failed'.($first !== '' ? ': '.$first : '.').' Check that the home directory of '.$target->user.' is writable.', SshException::INSTALL_FAILED);
         }
 
         $this->verify($target, $address, $key, $verifyHostKey);
@@ -95,7 +96,7 @@ final class KeyInstaller
                 throw $exception;
             }
 
-            throw new SshException("The key was added, but logging in with it still fails. The server may not allow key logins for {$target->user} (check PubkeyAuthentication and AuthorizedKeysFile in sshd_config).", SshException::AUTHENTICATION);
+            throw new SshException("The key was added, but logging in with it still fails. The server may not allow key logins for {$target->user} (check PubkeyAuthentication and AuthorizedKeysFile in sshd_config).", SshException::INSTALL_FAILED);
         }
 
         try {
@@ -105,7 +106,7 @@ final class KeyInstaller
         }
 
         if (! str_contains($result->output, self::VERIFY_MARKER)) {
-            throw new SshException('Logged in with the key, but the server didn\'t run a test command.', SshException::AUTHENTICATION);
+            throw new SshException('Logged in with the key, but the server didn\'t run a test command.', SshException::INSTALL_FAILED);
         }
     }
 

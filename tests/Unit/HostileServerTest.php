@@ -45,3 +45,13 @@ test('a server that never stops sending before its greeting is cut off at the co
     'slow drip' => ['while (@fwrite($c, "x")) { usleep(100000); }'],
     'silence' => ['sleep(10);'],
 ]);
+
+test('a connect error quotes the underlying message without control characters', function () {
+    // phpseclib's messages are its own today; this keeps a future one carrying server text from reaching a terminal raw.
+    $describe = new ReflectionMethod(PhpseclibConnector::class, 'describeConnectFailure');
+    $message = $describe->invoke(null, 'root@203.0.113.1', "odd failure \x1b[2J\x07from server ".str_repeat('x', 500));
+
+    expect($message)->toStartWith("Can't connect to root@203.0.113.1: odd failure [2Jfrom server")
+        ->not->toContain("\x1b")->not->toContain("\x07")
+        ->and(mb_strlen($message))->toBeLessThan(260);
+});

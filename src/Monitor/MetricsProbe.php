@@ -47,9 +47,18 @@ SH;
             throw new SshException('Reading the server\'s metrics timed out.', SshException::TIMEOUT);
         }
 
+        // A cut-off answer would read as "unknown" for every metric, hiding the failure.
+        if ($result->truncated || preg_match('/^@@END@@$/m', $result->output) !== 1) {
+            throw new SshException('The server\'s answer to the metrics probe was cut off or stopped part way.', SshException::DROPPED);
+        }
+
         return self::parse($result->output);
     }
 
+    /**
+     * Lenient: a missing or garbled section is null. run() is the one that
+     * refuses an answer without its end marker.
+     */
     public static function parse(string $raw): Metrics
     {
         $sections = [];

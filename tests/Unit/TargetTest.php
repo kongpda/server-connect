@@ -100,3 +100,36 @@ test('the guard refuses this application\'s own address unless local targets are
     expect($relaxed->resolve('self.example.com'))->toBe('203.0.113.5')
         ->and($relaxed->resolve('127.0.0.1'))->toBe('127.0.0.1');
 });
+
+test('login names are plain ASCII, since they are shown in messages and pages', function (string $user) {
+    expect(fn () => new Target('example.com', 22, $user))->toThrow(InvalidTarget::class);
+})->with([
+    'right-to-left override' => ["admin\u{202E}toor"],
+    'non-ASCII lookalike' => ["r\u{043E}ot"],
+    'quote' => ['root"><script>'],
+    'shell expansion' => ['$(id)'],
+    'backtick' => ['`id`'],
+    'too long' => [str_repeat('a', 65)],
+    'trailing newline' => ["root\n"],
+]);
+
+test('common login names still work, including directory logins', function (string $user) {
+    expect((new Target('example.com', 22, $user))->user)->toBe($user);
+})->with(['root', 'deploy', 'ubuntu', 'ec2-user', 'first.last', '_svc', 'user@corp.example', str_repeat('a', 64)]);
+
+test('the guard looks up its own hosts once, not on every resolve', function () {
+    // Checking a list of servers shouldn't cost a DNS round trip per server for the app's own name.
+    $lookups = [];
+    $guard = new TargetGuard(ownHosts: ['app.example.com'], lookup: function (string $host) use (&$lookups): array {
+        $lookups[] = $host;
+
+        return $host === 'app.example.com' ? ['198.51.100.7'] : ['203.0.113.9'];
+    }, interfaceAddresses: []);
+
+    $guard->resolve('203.0.113.1');
+    $guard->resolve('203.0.113.2');
+    $guard->resolve('203.0.113.3');
+
+    expect(array_count_values($lookups)['app.example.com'] ?? 0)->toBe(1)
+        ->and(fn () => $guard->resolve('198.51.100.7'))->toThrow(SshException::class, 'own server');
+});

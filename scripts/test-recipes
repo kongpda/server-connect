@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs the recipe scripts for real in a throwaway Debian container: the
 # firewall keeps SSH open, and harden-ssh refuses to lock out a user with no key.
-# No sshd is started; the scripts run through `docker exec`.
+# The scripts run through `docker exec`; the tests start sshd (no systemd) when
+# a reload needs one.
 #
 # Usage: scripts/test-recipes    (needs Docker and `composer install`)
 set -euo pipefail

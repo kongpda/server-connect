@@ -31,6 +31,10 @@ enum Provider: string
     case Parallels = 'parallels';
     case Unknown = 'unknown';
 
+    /**
+     * @deprecated since 0.5, use fromDmi(), which also reads the product name
+     *             (needed to tell VirtualBox from Oracle Cloud).
+     */
     public static function fromVendor(string $vendor): self
     {
         return self::fromDmi($vendor);

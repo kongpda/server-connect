@@ -54,8 +54,10 @@ final readonly class Target
      */
     public static function validateUser(string $user): void
     {
-        if ($user === '' || str_starts_with($user, '-') || strlen($user) > 64 || preg_match('/[\s\x00-\x1f\x7f:\/]/', $user) === 1) {
-            throw new InvalidTarget('Use a plain login name such as root or deploy (no spaces, not starting with "-").');
+        // Portable login names, plus "@" for directory logins (user@realm). The name lands in
+        // messages, logs and pages, so no quotes, "$", non-ASCII or bidi characters.
+        if (preg_match('/\A[A-Za-z0-9._][A-Za-z0-9._@-]{0,63}\z/', $user) !== 1) {
+            throw new InvalidTarget('Use a plain login name such as root or deploy: letters, digits and . _ - @, not starting with "-".');
         }
     }
 

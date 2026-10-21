@@ -308,7 +308,7 @@ final class PhpseclibConnector implements Connector
             str_contains($lower, 'timed out'), str_contains($lower, 'timeout') => "Connecting to {$where} timed out. Check the address, and that the server's firewall allows SSH from this machine.",
             str_contains($lower, 'no route'), str_contains($lower, 'unreachable') => "There is no route to {$where}. Check the address.",
             str_contains($lower, 'no algorithms'), str_contains($lower, 'no compatible') => "{$where} doesn't support the modern SSH algorithms this package requires (OpenSSH 6.5 or newer does).",
-            default => "Can't connect to {$where}: ".mb_substr($message, 0, 200),
+            default => "Can't connect to {$where}: ".mb_substr((string) preg_replace('/[\x00-\x1f\x7f]/', '', $message), 0, 200),
         };
     }
 }

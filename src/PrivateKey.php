@@ -25,9 +25,9 @@ final class PrivateKey
     /**
      * The most bcrypt KDF rounds a passphrase-protected OpenSSH key may use.
      * The work factor comes from the key text, and opening takes about half
-     * a second per round in pure PHP.
+     * a second per round in pure PHP, so 32 rounds hold a worker ~16 seconds.
      */
-    public const MAX_KDF_ROUNDS = 64;
+    public const MAX_KDF_ROUNDS = 32;
 
     private function __construct(
         private readonly PhpseclibPrivateKey $key,
@@ -81,7 +81,12 @@ final class PrivateKey
             throw InvalidPrivateKey::unsupported();
         }
 
-        return self::wrap($key, $comment !== '' ? $comment : self::commentOf($text));
+        try {
+            // An unusual curve (secp256k1, brainpool…) loads but has no OpenSSH form.
+            return self::wrap($key, $comment !== '' ? $comment : self::commentOf($key));
+        } catch (Throwable) {
+            throw InvalidPrivateKey::unsupported();
+        }
     }
 
     /**
@@ -215,21 +220,15 @@ final class PrivateKey
         return new self($key, $type, $line);
     }
 
-    private static function commentOf(string $text): string
+    /**
+     * OpenSSH keys carry their comment inside, encrypted or not; phpseclib
+     * exposes it on the loaded key.
+     */
+    private static function commentOf(PhpseclibPrivateKey $key): string
     {
-        if (! str_contains($text, 'BEGIN OPENSSH PRIVATE KEY')) {
-            return '';
-        }
+        $comment = method_exists($key, 'getComment') ? $key->getComment() : null;
 
-        // Unencrypted OpenSSH keys carry the comment inside; phpseclib exposes it on load.
-        try {
-            $key = PublicKeyLoader::loadPrivateKey($text);
-            $comment = method_exists($key, 'getComment') ? $key->getComment() : null;
-
-            return is_string($comment) ? $comment : '';
-        } catch (Throwable) {
-            return '';
-        }
+        return is_string($comment) ? $comment : '';
     }
 
     private static function normalize(string $text): string

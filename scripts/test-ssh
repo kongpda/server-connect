@@ -20,12 +20,15 @@ trap cleanup EXIT
 
 step "starting sshd on 127.0.0.1:$port"
 # alpine/git ships OpenSSH's sshd and ssh-keygen.
-docker run -d --rm --name "$name" -p "127.0.0.1:$port:22" -e "PW=$password" --entrypoint sh alpine/git -c \
+# No --rm: if sshd dies at start, its log must still be there to show.
+docker run -d --name "$name" -p "127.0.0.1:$port:22" -e "PW=$password" --entrypoint sh alpine/git -c \
     'ssh-keygen -A >/dev/null && adduser -D -s /bin/sh tester && echo "tester:$PW" | chpasswd >/dev/null && exec /usr/sbin/sshd -D -e -o PasswordAuthentication=yes -o PermitRootLogin=no' >/dev/null
 # docker-proxy accepts connections before sshd listens: wait for sshd's own log line.
 listening=''
 for _ in $(seq 1 100); do
-    docker logs "$name" 2>&1 | grep -q 'Server listening' && { listening=1; break; }
+    # Read the log first: grep -q under pipefail can fail the pipe with SIGPIPE.
+    log="$(docker logs "$name" 2>&1 || true)"
+    case "$log" in *'Server listening'*) listening=1; break ;; esac
     sleep 0.2
 done
 if [ -z "$listening" ]; then

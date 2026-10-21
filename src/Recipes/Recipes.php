@@ -97,10 +97,12 @@ if [ "$SIZE" -lt 256 ] || [ "$SIZE" -gt 65536 ]; then echo 'Swap size must be be
 CUR=$(awk '$1=="/swapfile"{print int($3/1024)}' /proc/swaps 2>/dev/null)
 OTHER=$(awk 'NR>1 && $1!="/swapfile"{print $1}' /proc/swaps 2>/dev/null)
 room(){ FREE=$(df -Pm / | awk 'NR==2{print $4}'); if [ $(( ${FREE:-0} + ${1:-0} )) -lt $((SIZE + 512)) ]; then echo "Not enough free disk for a ${SIZE} MB swap file (${FREE:-?} MB free)."; return 1; fi; }
-mk(){ $SUDO rm -f /swapfile && { $SUDO fallocate -l "${SIZE}M" /swapfile || $SUDO dd if=/dev/zero of=/swapfile bs=1M count="$SIZE" status=none; } && $SUDO chmod 600 /swapfile && $SUDO mkswap /swapfile >/dev/null && $SUDO swapon /swapfile && { grep -qE '^/swapfile[[:space:]]' /etc/fstab || echo '/swapfile none swap sw 0 0' | $SUDO tee -a /etc/fstab >/dev/null; } && echo "Swap file ready (${SIZE} MB)."; }
+fstab(){ grep -qE '^/swapfile[[:space:]]' /etc/fstab || echo '/swapfile none swap sw 0 0' | $SUDO tee -a /etc/fstab >/dev/null; }
+mk(){ $SUDO rm -f /swapfile && { $SUDO fallocate -l "${SIZE}M" /swapfile || $SUDO dd if=/dev/zero of=/swapfile bs=1M count="$SIZE" status=none; } && $SUDO chmod 600 /swapfile && $SUDO mkswap /swapfile >/dev/null && $SUDO swapon /swapfile && fstab && echo "Swap file ready (${SIZE} MB)."; }
 if [ -n "$CUR" ]; then
   D=$((CUR - SIZE)); [ "$D" -lt 0 ] && D=$((0 - D))
-  if [ "$D" -le 8 ]; then echo "Swap file already ${CUR} MB, nothing to change."
+  # A swap file turned on by hand would be gone after a reboot without its fstab line.
+  if [ "$D" -le 8 ]; then fstab || exit 1; echo "Swap file already ${CUR} MB, nothing to change."
   else
     USED=$(awk '$1=="/swapfile"{print int($4/1024)}' /proc/swaps); AVAIL=$(awk '/^MemAvailable:/{print int($2/1024)}' /proc/meminfo)
     if [ "${USED:-0}" -ge $(( ${AVAIL:-0} - 256 )) ]; then echo "Can't resize safely now: ${USED} MB is in swap and only ${AVAIL} MB of RAM is free to take it back."; exit 1; fi
@@ -121,7 +123,7 @@ SH,
             new Recipe(
                 id: 'ufw',
                 label: 'Enable the firewall (UFW)',
-                summary: 'Denies all inbound traffic except SSH on the ports sshd listens on and the port this connection uses (plus any extra ports you list). Outbound traffic is not limited.',
+                summary: 'Denies inbound traffic except SSH on the ports sshd listens on and the port this connection uses (plus any extra ports you list). Outbound traffic is not limited. Ports published by Docker containers bypass UFW and stay open.',
                 group: RecipeGroup::Prepare,
                 safety: SafetyLevel::HighRisk,
                 prepareOrder: 4,
@@ -138,7 +140,8 @@ P=$( { $SUDO sshd -T 2>/dev/null | awk '$1=="port"{print $2}'; echo "${SSH_CONNE
 for p in $P; do $SUDO ufw allow "${p}/tcp" || exit 1; done
 for p in $EXTRA_PORTS; do $SUDO ufw allow "$p" || echo "skipped invalid port: $p"; done
 $SUDO ufw default deny incoming >/dev/null && $SUDO ufw default allow outgoing >/dev/null || exit 1
-$SUDO ufw --force enable && $SUDO ufw status verbose
+$SUDO ufw --force enable && $SUDO ufw status verbose || exit 1
+if command -v docker >/dev/null 2>&1; then echo 'Note: ports published by Docker containers (docker run -p) bypass UFW and stay reachable. Publish them on 127.0.0.1, or filter them in the DOCKER-USER chain.'; fi
 SH,
             ),
             new Recipe(
@@ -182,27 +185,41 @@ SH,
                 prepareOrder: 7,
                 params: [],
                 body: <<<'SH'
+if ! $SUDO true 2>/dev/null; then echo "This recipe needs root, or passwordless sudo for $(id -un). Nothing was changed."; exit 1; fi
 if ! $SUDO grep -qiE '^[[:space:]]*Include[[:space:]].*sshd_config\.d' /etc/ssh/sshd_config; then echo "/etc/ssh/sshd_config doesn't include /etc/ssh/sshd_config.d, so nothing was changed. Harden it by hand."; exit 1; fi
 # Turning off passwords without a working key locks the user out for good: require a key line
-# in one of the login user's authorized keys files (skipped when AuthorizedKeysCommand is set).
+# in one of the login user's authorized keys files, not commented out (skipped when
+# AuthorizedKeysCommand is set). The default path only when sshd reports none.
 U=$(id -un); KC=$($SUDO sshd -T 2>/dev/null | awk '$1=="authorizedkeyscommand"{print $2}')
 if [ -z "$KC" ] || [ "$KC" = none ]; then
   FOUND=''
-  for f in $($SUDO sshd -T 2>/dev/null | awk '$1=="authorizedkeysfile"{for(i=2;i<=NF;i++)print $i}') .ssh/authorized_keys; do
+  FILES=$($SUDO sshd -T 2>/dev/null | awk '$1=="authorizedkeysfile"{for(i=2;i<=NF;i++)print $i}'); [ -n "$FILES" ] || FILES=.ssh/authorized_keys
+  for f in $FILES; do
     f=$(printf '%s' "$f" | sed "s|%h|$HOME|g; s|%u|$U|g; s|%%|%|g"); case "$f" in /*) ;; *) f="$HOME/$f" ;; esac
-    if $SUDO grep -qE '(^|[[:space:]])(ssh-(ed25519|rsa)|ecdsa-sha2-nistp[0-9]+|sk-[a-z0-9@.-]+)[[:space:]]+AAAA' "$f" 2>/dev/null; then FOUND=1; break; fi
+    if $SUDO cat "$f" 2>/dev/null | grep -vE '^[[:space:]]*#' | grep -qE '(^|[[:space:]])(ssh-(ed25519|rsa)|ecdsa-sha2-nistp[0-9]+|sk-[a-z0-9@.-]+)[[:space:]]+AAAA'; then FOUND=1; break; fi
   done
   if [ -z "$FOUND" ]; then echo "No SSH key is set up for $U, so turning off passwords would lock you out. Nothing was changed: add a key first."; exit 1; fi
 fi
 F=/etc/ssh/sshd_config.d/00-server-connect.conf
+# Keep a previous version of the file to put back on rollback (*.bak isn't included by sshd).
+B=''; if $SUDO test -e "$F"; then B="$F.bak"; $SUDO cp -p "$F" "$B" || exit 1; fi
+rollback(){ if [ -n "$B" ]; then $SUDO mv -f "$B" "$F"; else $SUDO rm -f "$F"; fi; }
+# Reload sshd so new logins use the config; open sessions stay up. Fails when there is no sshd to tell.
+reload(){
+  if [ -d /run/systemd/system ]; then
+    if systemctl is-active --quiet ssh 2>/dev/null || systemctl is-active --quiet sshd 2>/dev/null; then $SUDO systemctl reload ssh 2>/dev/null || $SUDO systemctl reload sshd 2>/dev/null
+    elif systemctl is-active --quiet ssh.socket 2>/dev/null; then echo 'sshd is socket-activated: each new connection reads the new config.'
+    else return 1; fi
+  else $SUDO service ssh reload >/dev/null 2>&1 || $SUDO service sshd reload >/dev/null 2>&1 || $SUDO rc-service sshd reload >/dev/null 2>&1
+  fi
+}
 # Only tighten PermitRootLogin: this file is read first, so it would override a stricter "no".
 R=''; if [ "$($SUDO sshd -T 2>/dev/null | awk '$1=="permitrootlogin"{print $2}')" = yes ]; then R='PermitRootLogin prohibit-password\n'; fi
-printf "# Managed by server-connect: key-only SSH logins.\n${R}PasswordAuthentication no\nKbdInteractiveAuthentication no\n" | $SUDO tee "$F" >/dev/null && $SUDO chmod 644 "$F" || { $SUDO rm -f "$F"; exit 1; }
-if ! $SUDO sshd -t; then echo 'sshd rejected the new config: rolled back, nothing changed.'; $SUDO rm -f "$F"; exit 1; fi
-if systemctl is-active --quiet ssh 2>/dev/null || systemctl is-active --quiet sshd 2>/dev/null; then
-  if $SUDO systemctl reload ssh 2>/dev/null || $SUDO systemctl reload sshd 2>/dev/null; then echo 'sshd reloaded (open sessions stay connected).'; else echo 'Could not reload sshd: rolled back.'; $SUDO rm -f "$F"; exit 1; fi
-else echo 'sshd applies this on its next start (socket-activated).'; fi
-if ! $SUDO sshd -T 2>/dev/null | grep -qix 'passwordauthentication no'; then echo 'sshd_config sets PasswordAuthentication before the drop-in directory; edit it by hand. Rolled back.'; $SUDO rm -f "$F"; $SUDO systemctl reload ssh 2>/dev/null || $SUDO systemctl reload sshd 2>/dev/null || true; exit 1; fi
+printf "# Managed by server-connect: key-only SSH logins.\n${R}PasswordAuthentication no\nKbdInteractiveAuthentication no\n" | $SUDO tee "$F" >/dev/null && $SUDO chmod 644 "$F" || { rollback; exit 1; }
+if ! $SUDO sshd -t; then echo 'sshd rejected the new config: rolled back, nothing changed.'; rollback; exit 1; fi
+if ! $SUDO sshd -T 2>/dev/null | grep -qix 'passwordauthentication no'; then echo 'sshd_config sets PasswordAuthentication before the drop-in directory; edit it by hand. Rolled back.'; rollback; exit 1; fi
+if reload; then echo 'sshd reloaded (open sessions stay connected).'; else echo "Could not reload sshd, so it wouldn't use the new config: rolled back."; rollback; exit 1; fi
+[ -z "$B" ] || $SUDO rm -f "$B"
 echo '--- Effective settings:'
 $SUDO sshd -T 2>/dev/null | grep -Ei '^(permitrootlogin|passwordauthentication|kbdinteractiveauthentication) '
 SH,
@@ -218,8 +235,11 @@ SH,
                 body: <<<'SH'
 command -v apt-get >/dev/null 2>&1 || { echo 'This recipe needs a Debian or Ubuntu server (apt-get).'; exit 1; }
 sc_wait_dpkg
-$APT update && $APT upgrade || exit 1
-echo '--- Done. Reboot required:'; test -f /var/run/reboot-required && echo yes || echo no
+# --with-new-pkgs: a kernel or package update that needs a new dependency isn't held back.
+$APT update && $APT upgrade --with-new-pkgs || exit 1
+# Debian writes no reboot-required file; a newer kernel in /boot than the running one says the same.
+K=$(ls -d /boot/vmlinuz-[0-9]* 2>/dev/null | sed 's|^/boot/vmlinuz-||' | sort -V | tail -1)
+echo '--- Done. Reboot required:'; if test -f /var/run/reboot-required || { [ -n "$K" ] && [ "$K" != "$(uname -r)" ]; }; then echo yes; else echo no; fi
 SH,
             ),
             new Recipe(
@@ -231,6 +251,9 @@ SH,
                 prepareOrder: null,
                 params: [],
                 body: <<<'SH'
+# Rebooting in the middle of dpkg can leave packages half-installed.
+sc_wait_dpkg
+if pgrep -x 'apt|apt-get|dpkg|aptitude' >/dev/null 2>&1; then echo 'A package job is still running after 5 minutes, so the server was not rebooted. Try again later.'; exit 1; fi
 echo 'Rebooting now: the connection will drop.'
 $SUDO systemctl reboot || $SUDO reboot
 SH,
