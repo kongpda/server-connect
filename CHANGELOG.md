@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
+
+Fixes from a second review: work limits phpseclib left open, recipes that
+could lock you out of a server, and server output that could mislead or
+crash the caller. Check the "Changed" list before upgrading.
+
+### Changed
+
+- `Probe::parse()` throws `SshException` (`dropped`) when the output has no
+  `@@END@@` marker. Before, it returned facts with the missing parts read
+  as "no".
+- `MetricsProbe::run()` throws `SshException` (`timeout`) on a timeout.
 
 ### Fixed
 

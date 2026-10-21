@@ -16,7 +16,7 @@ It isn't on Packagist yet, so add its repository before requiring it:
 
 ```sh
 composer config repositories.server-connect vcs https://github.com/kongpda/server-connect
-composer require kongpda/server-connect:^0.3
+composer require kongpda/server-connect:^0.4
 ```
 
 ## Where it connects
