@@ -17,8 +17,8 @@ jobs:
         php: ['8.3', '8.4', '8.5']
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: shivammathur/setup-php@bf6b4fbd49ca58e4608c9c89fba0b8d90bd2a39f # 2.35.5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: ${{ matrix.php }}
           extensions: sodium
@@ -27,7 +27,10 @@ jobs:
       - run: composer lint
       - run: composer analyse
       - run: composer test
+      # The Docker tests don't depend on the PHP version much; run them once to save runner time.
       - name: Integration tests against a real sshd
+        if: matrix.php == '8.3'
         run: scripts/test-ssh
       - name: Recipe tests in a Debian container
+        if: matrix.php == '8.3'
         run: scripts/test-recipes
